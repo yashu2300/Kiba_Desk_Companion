@@ -2,6 +2,7 @@
 Entry Point for the Application
 """
 import sys
+from pathlib import Path
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QApplication
@@ -10,6 +11,8 @@ from frontend.main_window import DeskCompanionWindow
 from frontend.theme import APP_STYLESHEET
 
 from backend.services.webcam_service import WebcamService
+from backend.services.face_recognition_service import FaceRecognitionService
+
 from backend.slots import SlotController
 
 def create_application(argv: list[str] | None = None) -> QApplication:
@@ -26,13 +29,22 @@ def create_application(argv: list[str] | None = None) -> QApplication:
 
 def main() -> int:
     app = create_application()
+    project_root = Path(__file__).resolve().parent
 
     # Created Services
-    webcam = WebcamService(camera_index=0, target_fps=24)
+    webcam = WebcamService(camera_index=0, target_fps=24, analysis_fps=4)
+    face_recognition = FaceRecognitionService(
+        detector_model_path=Path().cwd().joinpath("models", "face_detection_yunet_2023mar.onnx"), 
+        recognizer_model_path= Path().cwd().joinpath("models", "face_recognition_sface_2021dec.onnx"),  
+        expression_model_path= Path().cwd().joinpath("models", "facial_expression_recognition_mobilefacenet_2022july.onnx"),
+        owner_embedding_path=Path().cwd().joinpath("data", "vision", "owner_embedding.npy") 
+    )
 
     window = DeskCompanionWindow()
-    slot_controller = SlotController(webcam)
+    slot_controller = SlotController(webcam, face_recognition)
     slot_controller.connect_window_to_slots(window)
+    app.aboutToQuit.connect(slot_controller.shutdown)
+    face_recognition.start()
 
 
     window.showMaximized()

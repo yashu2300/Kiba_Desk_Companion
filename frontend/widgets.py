@@ -67,17 +67,23 @@ class CameraStage(QWidget):
         self.setAttribute(Qt.WA_OpaquePaintEvent, True)
         self.camera_active = False
         self._frame: QImage | None = None
+        self._vision_result: dict = {}
 
     def set_camera_active(self, active: bool) -> None:
         self.camera_active = active
         if not active:
             self._frame = None
+            self._vision_result = {}
         self.update()
 
     def set_frame(self, frame: QImage) -> None:
         """Receive an already detached frame from WebcamService."""
 
         self._frame = frame
+        self.update()
+
+    def set_vision_result(self, result: dict) -> None:
+        self._vision_result = dict(result)
         self.update()
 
     def paintEvent(self, event) -> None:  # noqa: N802 - Qt method name
@@ -139,10 +145,20 @@ class CameraStage(QWidget):
         painter.setFont(overlay_font)
         painter.setPen(QColor("#dce2f5"))
         bottom = self.height() - 15
-        left = "LIVE LAPTOP WEBCAM" if self._frame is not None else "NO FACE DETECTED"
+        face_count = int(self._vision_result.get("face_count", 0))
+
+        if self._frame is not None:
+            plural = "S" if face_count != 1 else ""
+            left = f"LIVE · {face_count} FACE{plural}"
+        else:
+            left = "NO CAMERA FRAME"
+
         painter.drawText(14, bottom, left)
-        right = "VISION NOT CONNECTED" if self._frame is not None else "UNKNOWN"
+
+        right = str(self._vision_result.get("identity", "VISION PENDING")).upper()
+
         width = painter.fontMetrics().horizontalAdvance(right)
+
         painter.drawText(self.width() - width - 14, bottom, right)
 
 class ComposerTextEdit(QTextEdit):

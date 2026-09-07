@@ -356,6 +356,7 @@ class DeskCompanionWindow(QMainWindow):
     # Connect UI Components to backend slots
     def _connect_signals(self):
         self.camera_button.clicked.connect(self._toggle_camera)
+        self.enroll_button.clicked.connect(lambda _checked=False: self.face_enrollment_requested.emit())
 
 
 
@@ -377,6 +378,11 @@ class DeskCompanionWindow(QMainWindow):
         self.camera_toggled.emit(True)
 
     def _set_camera_ui_stopped(self) -> None:
+        self.presence_stat.set_value("Unknown")
+        self.identity_stat.set_value("Unknown")
+        self.expression_stat.set_value("Unknown")
+        self.posture_stat.set_value("Unknown")
+
         self.camera_starting = False
         self.camera_active = False
         self.camera_stage.set_camera_active(False)
@@ -386,7 +392,6 @@ class DeskCompanionWindow(QMainWindow):
         self.camera_badge.setText("OFFLINE")
         self.camera_badge.setObjectName("chip")
         self.enroll_button.hide()
-        self.presence_stat.set_value("Unknown")
         self.camera_button.setToolTip("Open the laptop webcam")
         self._repolish_camera_controls()
 
@@ -412,6 +417,8 @@ class DeskCompanionWindow(QMainWindow):
         self.camera_badge.setText("LIVE")
         self.camera_badge.setObjectName("chipLive")
         self.enroll_button.show()
+        self.enroll_button.setEnabled(False)
+        self.enroll_button.setToolTip("Waiting for the first vision frame.")
         self.presence_stat.set_value("Vision pending")
         self.camera_button.setToolTip(
             f"Camera {camera_index}: {width}×{height} using {backend_name}"
@@ -426,3 +433,57 @@ class DeskCompanionWindow(QMainWindow):
     @pyqtSlot()
     def show_camera_stopped(self) -> None:
         self._set_camera_ui_stopped()
+
+    @pyqtSlot(dict)
+    def show_vision_result(self, result: dict) -> None:
+        """Update the visual-context cards."""
+        # At least one frame has now passed through the CV service.
+        if "Enrolling" not in self.enroll_button.text():
+            self.enroll_button.setEnabled(True)
+            self.enroll_button.setToolTip("Store the currently visible face as the owner.")
+
+        self.camera_stage.set_vision_result(result)
+        self.presence_stat.set_value(result.get("presence", "Unknown"))
+        self.identity_stat.set_value(result.get("identity", "Unknown"))
+        self.expression_stat.set_value(result.get("expression", "Unknown"))
+        self.posture_stat.set_value(result.get("posture", "Unknown"))
+
+
+    @pyqtSlot(bool)
+    def set_face_enrollment_busy(self,busy: bool) -> None:
+        self.enroll_button.setEnabled(not busy)
+        self.enroll_button.setText("◌  Enrolling…" if busy else "◎  Enroll my face")
+
+
+    @pyqtSlot(bool, str)
+    def show_face_enrollment_result(self, success: bool,message: str) -> None:
+        self.enroll_button.setEnabled(True)
+
+        self.enroll_button.setText("◎  Re-enroll my face" if success else "◎  Enroll my face")
+
+        self.enroll_button.setToolTip(message)
+
+        if success:
+            self.identity_stat.set_value("Owner enrolled")
+        else:
+            self._show_notice(message)
+
+
+    @pyqtSlot(str)
+    def show_vision_error(
+        self,
+        message: str,
+    ) -> None:
+        self.presence_stat.set_value(
+            "Vision unavailable"
+        )
+
+        self._show_notice(message)
+
+
+    def _show_notice(
+        self,
+        message: str,
+    ) -> None:
+        self.notice_label.setText(message)
+        self.notice_label.show()

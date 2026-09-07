@@ -6,6 +6,7 @@ import numpy as np
 from PyQt5.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
 from PyQt5.QtGui import QImage
 
+import time
 
 def bgr_frame_to_qimage(frame: np.ndarray, *, mirror: bool = True) -> QImage:
     """Convert one OpenCV BGR frame into an independently owned RGB QImage."""
@@ -34,6 +35,7 @@ class _WebcamWorker(QThread):
     """Read frames away from the main Qt event loop."""
 
     frame_ready = pyqtSignal(QImage)
+    analysis_frame_ready = pyqtSignal(object)
     camera_opened = pyqtSignal(int, int, int, str)
     capture_error = pyqtSignal(str)
     capture_stopped = pyqtSignal()
@@ -42,11 +44,13 @@ class _WebcamWorker(QThread):
         self,
         camera_index: int,
         target_fps: int,
+        analysis_fps:int,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
         self.camera_index = camera_index
         self.target_fps = max(1, target_fps)
+        self.analysis_fps = max(1, min(analysis_fps, self.target_fps))
 
     def _open_capture(self):
         attempts: list[tuple[int, str]] = []
@@ -87,6 +91,9 @@ class _WebcamWorker(QThread):
 
             failed_reads = 0
             frame_delay_ms = max(1, int(1000 / self.target_fps))
+            analysis_interval = 1.0 / self.analysis_fps
+            last_analysis_time = 0.0
+
             while not self.isInterruptionRequested():
                 ok, frame = capture.read()
                 if not ok or frame is None:
@@ -102,9 +109,17 @@ class _WebcamWorker(QThread):
                 failed_reads = 0
                 try:
                     self.frame_ready.emit(bgr_frame_to_qimage(frame, mirror=True))
+                    
                 except (ValueError, cv2.error) as error:
                     self.capture_error.emit(f"Webcam frame conversion failed: {error}")
                     break
+                now = time.monotonic()
+
+                if now - last_analysis_time >= analysis_interval:
+                    # Own the array because VideoCapture reuses its buffer.
+                    self.analysis_frame_ready.emit(frame.copy())
+                    last_analysis_time = now
+    
                 self.msleep(frame_delay_ms)
         except Exception as error:  # Hardware drivers can raise backend-specific errors.
             self.capture_error.emit(f"Unexpected webcam error: {error}")
@@ -117,6 +132,7 @@ class WebcamService(QObject):
     """Small Wrapper around the threaded capture worker."""
 
     frame_ready = pyqtSignal(QImage)
+    analysis_frame_ready = pyqtSignal(object)
     camera_opened = pyqtSignal(int, int, int, str)
     error = pyqtSignal(str)
     stopped = pyqtSignal()
@@ -125,11 +141,13 @@ class WebcamService(QObject):
         self,
         camera_index: int = 0,
         target_fps: int = 24,
+        analysis_fps: int = 4,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
         self.camera_index = camera_index
         self.target_fps = target_fps
+        self.analysis_fps = analysis_fps
         self._worker: _WebcamWorker | None = None
 
     @property
@@ -144,9 +162,11 @@ class WebcamService(QObject):
         worker = _WebcamWorker(
             self.camera_index,
             self.target_fps,
+            self.analysis_fps,
             self,
         )
         worker.frame_ready.connect(self.frame_ready)
+        worker.analysis_frame_ready.connect(self.analysis_frame_ready)
         worker.camera_opened.connect(self.camera_opened)
         worker.capture_error.connect(self.error)
         worker.capture_stopped.connect(self.stopped)
