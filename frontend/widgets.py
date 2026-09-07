@@ -202,8 +202,8 @@ class GoalDialog(QDialog):
         )
         title = make_label("Set the companion's direction", "panelTitle")
         description = make_label(
-            "These values are local UI state for now. The save slot is where you can "
-            "later call FastAPI or a custom Python function.",
+            "Your name, active goal, and nudge preference "
+            "are stored in the Desk Companion database.",
             "muted",
         )
         description.setWordWrap(True)

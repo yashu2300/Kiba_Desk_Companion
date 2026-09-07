@@ -14,6 +14,9 @@ from backend.services.webcam_service import WebcamService
 from backend.services.face_recognition_service import FaceRecognitionService
 
 from backend.slots import SlotController
+from backend.state_manager import CurrentStateManager
+from backend.database import Database
+from backend.demo_clock import DemoClock
 
 def create_application(argv: list[str] | None = None) -> QApplication:
     """Create and style the Qt application."""
@@ -29,8 +32,23 @@ def create_application(argv: list[str] | None = None) -> QApplication:
 
 def main() -> int:
     app = create_application()
-    project_root = Path(__file__).resolve().parent
-
+    database = Database()
+    database.create_tables()
+    profile = database.load_or_create_profile()
+    clock = DemoClock(speed=1.0)
+    session_id = database.start_app_session(profile["user_id"], clock.speed)
+    state_manager = CurrentStateManager(
+        clock=clock,
+        session_id=session_id,
+        user_name=profile["display_name"],
+        goal=profile["goal"],
+        automatic_nudges=(
+            profile["automatic_nudges"]
+        ),
+        # Five simulated minutes.
+        inactivity_threshold_s=300.0,
+    )
+    
     # Created Services
     webcam = WebcamService(camera_index=0, target_fps=24, analysis_fps=4)
     face_recognition = FaceRecognitionService(
@@ -41,10 +59,21 @@ def main() -> int:
     )
 
     window = DeskCompanionWindow()
-    slot_controller = SlotController(webcam, face_recognition)
+    window.load_profile(profile["display_name"], profile["goal"], profile["automatic_nudges"])
+    slot_controller = SlotController(
+        webcam,
+        face_recognition,
+        clock,
+        state_manager,
+        database,
+        profile["user_id"],
+        session_id,
+    )
+
     slot_controller.connect_window_to_slots(window)
     app.aboutToQuit.connect(slot_controller.shutdown)
     face_recognition.start()
+    state_manager.start()
 
 
     window.showMaximized()

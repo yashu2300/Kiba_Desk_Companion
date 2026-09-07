@@ -10,16 +10,33 @@ from PyQt5.QtCore import QObject, pyqtSlot
 # Import all services such as demo clock and etc. 
 from backend.services.webcam_service import WebcamService
 from backend.services.face_recognition_service import FaceRecognitionService
+from backend.state_manager import CurrentStateManager
+from backend.database import Database
+from backend.demo_clock import DemoClock
 
 from frontend.main_window import DeskCompanionWindow
 
 
 class SlotController(QObject):
-    def __init__(self, webcam:WebcamService, face_recognition:FaceRecognitionService, parent:QObject | None = None): # Add in Service Instance Here
+    def __init__(
+        self,
+        webcam: WebcamService,
+        face_recognition: FaceRecognitionService,
+        clock: DemoClock,
+        state_manager: CurrentStateManager,
+        database: Database,
+        user_id: int,
+        session_id: int,
+        parent: QObject | None = None) -> None:
 
         super().__init__(parent)
         self.webcam = webcam
         self.face_recognition = face_recognition
+        self.clock = clock
+        self.state_manager = state_manager
+        self.database = database
+        self.user_id = user_id
+        self.session_id = session_id
 
 
     def connect_window_to_slots(self, window:DeskCompanionWindow):
@@ -28,6 +45,10 @@ class SlotController(QObject):
         # Connect Main Window Signals
         window.camera_toggled.connect(self.on_camera_toggled)
         window.face_enrollment_requested.connect(self.on_face_enrollment_requested)
+        window.demo_clock_changed.connect(self.on_demo_clock_changed)
+        window.goal_saved.connect(self.on_goal_saved)
+        window.user_activity_detected.connect(self.state_manager.record_user_activity)
+
 
         # Connect WebcamService Signals
         self.webcam.frame_ready.connect(window.set_camera_frame)
@@ -36,7 +57,6 @@ class SlotController(QObject):
         self.webcam.error.connect(self._on_webcam_error)
         self.webcam.stopped.connect(window.show_camera_stopped)
         self.webcam.stopped.connect(self._on_webcam_stopped)
-        self.webcam.analysis_frame_ready.connect(self.face_recognition.submit_frame)
 
         # Connect Face Recongition Signals
         self.face_recognition.result_ready.connect(window.show_vision_result)
@@ -45,6 +65,18 @@ class SlotController(QObject):
         self.face_recognition.error.connect(window.show_vision_error)
         self.face_recognition.error.connect(self._on_vision_error)
         self.face_recognition.initialized.connect(self._on_vision_initialized)
+
+        # State Related
+        self.state_manager.state_changed.connect(window.show_current_state)
+        self.state_manager.snapshot_created.connect(self._persist_state_snapshot)
+
+
+        # Interconnected Serivce Signals
+        self.webcam.analysis_frame_ready.connect(self.face_recognition.submit_frame)
+        self.face_recognition.result_ready.connect(self.state_manager.update_vision_result)
+        self.webcam.stopped.connect(self.state_manager.mark_vision_unavailable)
+        
+        
 
 
     # Webcam Services
@@ -89,11 +121,51 @@ class SlotController(QObject):
     ) -> None:
         print(f"[VISION ERROR] {message}")
 
+    # DEMO & STATE RELATED
+    @pyqtSlot(str, float)
+    def on_demo_clock_changed(self, label: str, speed: float) -> None:
+        print(f"[CLOCK] {label} ({speed:g}x)")
+        self.state_manager.set_clock_speed(label, speed)
+
+    @pyqtSlot(str, str, bool)
+    def on_goal_saved(self, display_name: str, goal: str, automatic_nudges: bool) -> None:
+        self.database.save_profile(self.user_id, display_name, goal, automatic_nudges)
+
+        self.state_manager.update_profile(display_name, goal, automatic_nudges)
+
+        print("[DATABASE] User profile and goal saved.")
+
+
+    @pyqtSlot(dict)
+    def _persist_state_snapshot(self, snapshot: dict,) -> None:
+        try:
+            snapshot_id = (self.database.save_state_snapshot(snapshot))
+
+            print(
+                f"[STATE] Snapshot {snapshot_id} saved: "
+                f"{snapshot['trigger']} -> "
+                f"{snapshot['changed_fields']}"
+            )
+
+        except Exception as error:
+            print(
+                "[DATABASE ERROR] State snapshot "
+                f"was not saved: {error}"
+            )
+
+
+
 
 
     @pyqtSlot()
     def shutdown(self) -> None:
-        """Release the webcam and stop the vision thread."""
-
         self.webcam.stop()
         self.face_recognition.stop()
+
+        self.state_manager.capture_snapshot("session_ended")
+
+        self.state_manager.stop()
+
+        self.database.finish_app_session(self.session_id)
+
+        self.database.close()

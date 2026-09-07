@@ -6,8 +6,8 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot
 from PyQt5.QtGui import QImage
 
-from frontend.utils import _set_margins, make_label, make_panel, _mini_header
-from frontend.widgets import StatCell, CameraStage, ComposerTextEdit
+from frontend.utils import _duration, _set_margins, make_label, make_panel, _mini_header
+from frontend.widgets import StatCell, CameraStage, ComposerTextEdit, GoalDialog
 
 class DeskCompanionWindow(QMainWindow):
 
@@ -41,7 +41,7 @@ class DeskCompanionWindow(QMainWindow):
         self.resize(desktop_geometry.width(), desktop_geometry.height())
         
         self.display_name = ""
-        self.goal = "Take healthy breaks during focused work"
+        self.goal = "No goal set yet"
         self.automatic_nudges = True
 
         self.camera_active = False
@@ -357,6 +357,9 @@ class DeskCompanionWindow(QMainWindow):
     def _connect_signals(self):
         self.camera_button.clicked.connect(self._toggle_camera)
         self.enroll_button.clicked.connect(lambda _checked=False: self.face_enrollment_requested.emit())
+        self.clock_combo.currentIndexChanged.connect(self._on_clock_changed)
+        self.goal_edit_button.clicked.connect(self._open_goal_editor)
+        self.settings_button.clicked.connect(self._open_goal_editor)
 
 
 
@@ -401,6 +404,36 @@ class DeskCompanionWindow(QMainWindow):
         self.camera_button.style().polish(self.camera_button)
         self.camera_badge.style().unpolish(self.camera_badge)
         self.camera_badge.style().polish(self.camera_badge)
+
+    # Demo Setting Rleated
+    
+    def _on_clock_changed(self, _index: int) -> None:
+        label = self.clock_combo.currentText()
+        speed = float(
+            self.clock_combo.currentData()
+        )
+
+        self.clock_stat.set_value(
+            f"{speed:g}×"
+        )
+
+        self.demo_clock_changed.emit(
+            label,
+            speed,
+        )
+
+    def _open_goal_editor(self) -> None:
+        self.goal_editor_opened.emit()
+        dialog = GoalDialog(self.display_name, (self.goal if self.goal != "No goal set yet" else ""), self.automatic_nudges, self)
+
+        if dialog.exec_() != dialog.Accepted:
+            return
+
+        (self.display_name, self.goal, self.automatic_nudges) = dialog.values()
+
+        self.goal_label.setText(self.goal)
+
+        self.goal_saved.emit(self.display_name, self.goal, self.automatic_nudges)
 
     @pyqtSlot(QImage)
     def set_camera_frame(self, frame: QImage) -> None:
@@ -449,11 +482,11 @@ class DeskCompanionWindow(QMainWindow):
         self.posture_stat.set_value(result.get("posture", "Unknown"))
 
 
+    # Computer Vision Related Slots
     @pyqtSlot(bool)
     def set_face_enrollment_busy(self,busy: bool) -> None:
         self.enroll_button.setEnabled(not busy)
         self.enroll_button.setText("◌  Enrolling…" if busy else "◎  Enroll my face")
-
 
     @pyqtSlot(bool, str)
     def show_face_enrollment_result(self, success: bool,message: str) -> None:
@@ -467,7 +500,6 @@ class DeskCompanionWindow(QMainWindow):
             self.identity_stat.set_value("Owner enrolled")
         else:
             self._show_notice(message)
-
 
     @pyqtSlot(str)
     def show_vision_error(
@@ -487,3 +519,43 @@ class DeskCompanionWindow(QMainWindow):
     ) -> None:
         self.notice_label.setText(message)
         self.notice_label.show()
+
+
+
+
+    @pyqtSlot(str, str, bool)
+    def load_profile(self, display_name: str, goal: str, automatic_nudges: bool) -> None:
+        self.display_name = display_name
+        self.goal = goal or "No goal set yet"
+        self.automatic_nudges = automatic_nudges
+
+        self.goal_label.setText(self.goal)
+
+    @pyqtSlot(dict)
+    def show_current_state(self,state: dict) -> None:
+        self.inactive_stat.set_value(
+            _duration(
+                state.get(
+                    "inactive_seconds",
+                    0,
+                )
+            )
+        )
+
+        self.away_stat.set_value(
+            _duration(
+                state.get(
+                    "away_seconds",
+                    0,
+                )
+            )
+        )
+
+        speed = state.get(
+            "clock_speed",
+            1,
+        )
+
+        self.clock_stat.set_value(
+            f"{speed:g}×"
+        )
