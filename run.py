@@ -12,6 +12,7 @@ from frontend.theme import APP_STYLESHEET
 
 from backend.services.webcam_service import WebcamService
 from backend.services.face_recognition_service import FaceRecognitionService
+from backend.services.activity_monitor_service import ActivityMonitorService
 
 from backend.slots import SlotController
 from backend.state_manager import CurrentStateManager
@@ -57,12 +58,14 @@ def main() -> int:
         expression_model_path= Path().cwd().joinpath("models", "facial_expression_recognition_mobilefacenet_2022july.onnx"),
         owner_embedding_path=Path().cwd().joinpath("data", "vision", "owner_embedding.npy") 
     )
+    activity_monitor = ActivityMonitorService(throttle_seconds=0.25)
 
     window = DeskCompanionWindow()
     window.load_profile(profile["display_name"], profile["goal"], profile["automatic_nudges"])
     slot_controller = SlotController(
         webcam,
         face_recognition,
+        activity_monitor,
         clock,
         state_manager,
         database,
@@ -74,6 +77,7 @@ def main() -> int:
     app.aboutToQuit.connect(slot_controller.shutdown)
     face_recognition.start()
     state_manager.start()
+    activity_monitor.start()
 
 
     window.showMaximized()

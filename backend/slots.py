@@ -10,6 +10,8 @@ from PyQt5.QtCore import QObject, pyqtSlot
 # Import all services such as demo clock and etc. 
 from backend.services.webcam_service import WebcamService
 from backend.services.face_recognition_service import FaceRecognitionService
+from backend.services.activity_monitor_service import ActivityMonitorService
+
 from backend.state_manager import CurrentStateManager
 from backend.database import Database
 from backend.demo_clock import DemoClock
@@ -22,6 +24,7 @@ class SlotController(QObject):
         self,
         webcam: WebcamService,
         face_recognition: FaceRecognitionService,
+        activity_monitor: ActivityMonitorService,
         clock: DemoClock,
         state_manager: CurrentStateManager,
         database: Database,
@@ -32,6 +35,7 @@ class SlotController(QObject):
         super().__init__(parent)
         self.webcam = webcam
         self.face_recognition = face_recognition
+        self.activity_monitor = activity_monitor
         self.clock = clock
         self.state_manager = state_manager
         self.database = database
@@ -66,6 +70,11 @@ class SlotController(QObject):
         self.face_recognition.error.connect(self._on_vision_error)
         self.face_recognition.initialized.connect(self._on_vision_initialized)
 
+        # Activity Monitors
+        self.activity_monitor.started.connect(self._on_activity_monitor_started)
+        self.activity_monitor.stopped.connect(self._on_activity_monitor_stopped)
+        self.activity_monitor.error.connect(self._on_activity_monitor_error)
+
         # State Related
         self.state_manager.state_changed.connect(window.show_current_state)
         self.state_manager.snapshot_created.connect(self._persist_state_snapshot)
@@ -75,9 +84,7 @@ class SlotController(QObject):
         self.webcam.analysis_frame_ready.connect(self.face_recognition.submit_frame)
         self.face_recognition.result_ready.connect(self.state_manager.update_vision_result)
         self.webcam.stopped.connect(self.state_manager.mark_vision_unavailable)
-        
-        
-
+        self.activity_monitor.activity_detected.connect(self.state_manager.record_user_activity)
 
     # Webcam Services
     @pyqtSlot(bool)
@@ -121,6 +128,20 @@ class SlotController(QObject):
     ) -> None:
         print(f"[VISION ERROR] {message}")
 
+    # Activity Monitor Services
+    @pyqtSlot()
+    def _on_activity_monitor_started(self) -> None:
+        print("[ACTIVITY] Global mouse and keyboard monitoring started.")
+
+    @pyqtSlot()
+    def _on_activity_monitor_stopped(self) -> None:
+        print("[ACTIVITY] Global input monitoring stopped.")
+
+
+    @pyqtSlot(str)
+    def _on_activity_monitor_error(self, message: str) -> None:
+        print(f"[ACTIVITY ERROR] {message}")
+
     # DEMO & STATE RELATED
     @pyqtSlot(str, float)
     def on_demo_clock_changed(self, label: str, speed: float) -> None:
@@ -161,11 +182,10 @@ class SlotController(QObject):
     def shutdown(self) -> None:
         self.webcam.stop()
         self.face_recognition.stop()
+        self.activity_monitor.stop()
 
         self.state_manager.capture_snapshot("session_ended")
-
         self.state_manager.stop()
 
         self.database.finish_app_session(self.session_id)
-
         self.database.close()

@@ -287,10 +287,6 @@ class CurrentStateManager(QObject):
             clock_speed=self.clock.speed,
             away_seconds=away_seconds,
             inactive_seconds=inactive_seconds,
-            is_inactive=(
-                inactive_seconds
-                >= self.inactivity_threshold_s
-            ),
         )
 
     def _commit(
@@ -454,8 +450,10 @@ class CurrentStateManager(QObject):
             self.clock.elapsed_seconds()
         )
 
-        self.current = self._refresh_durations(
-            previous
+        self.current = replace(
+            self._refresh_durations(previous),
+            inactive_seconds=0.0,
+            is_inactive=False,
         )
 
         self.state_changed.emit(
@@ -502,22 +500,27 @@ class CurrentStateManager(QObject):
 
     @pyqtSlot()
     def _tick(self) -> None:
-        previous_inactive = (
-            self.current.is_inactive
+        previous_inactive = self.current.is_inactive
+
+        refreshed = self._refresh_durations(
+            self.current
         )
 
-        self.current = self._refresh_durations(
-            self.current
+        should_be_inactive = (
+            refreshed.inactive_seconds
+            >= self.inactivity_threshold_s
+        )
+
+        self.current = replace(
+            refreshed,
+            is_inactive=should_be_inactive,
         )
 
         self.state_changed.emit(
             self.current.to_dict()
         )
 
-        if (
-            self.current.is_inactive
-            != previous_inactive
-        ):
+        if not previous_inactive and should_be_inactive:
             self.capture_snapshot(
                 "inactivity_changed",
                 (
@@ -542,6 +545,10 @@ class CurrentStateManager(QObject):
         )
 
         payload = snapshot.to_dict()
+        print(
+            f"[STATE MEMORY] Snapshot created: "
+            f"{trigger} -> {list(changed_fields)}"
+        )
         self.snapshot_created.emit(payload)
 
         return payload
