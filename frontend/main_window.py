@@ -7,7 +7,7 @@ from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot
 from PyQt5.QtGui import QImage
 
 from frontend.utils import _duration, _set_margins, make_label, make_panel, _mini_header
-from frontend.widgets import StatCell, CameraStage, ComposerTextEdit, GoalDialog
+from frontend.widgets import StatCell, CameraStage, ComposerTextEdit, GoalDialog, CalendarEventCard
 
 class DeskCompanionWindow(QMainWindow):
 
@@ -223,24 +223,32 @@ class DeskCompanionWindow(QMainWindow):
 
     def _build_calendar_panel(self) -> QFrame:
         panel = make_panel()
+
         layout = QVBoxLayout(panel)
         _set_margins(layout)
         layout.setSpacing(10)
+
         refresh = QPushButton("↻")
         refresh.setObjectName("linkButton")
-        refresh.setToolTip("Refresh calendar")
-        self.calendar_refresh_button = refresh
-        layout.addLayout(_mini_header("▦", "Up next", "#f2c66e", refresh))
+        refresh.setToolTip("Refresh Google Calendar")
 
-        placeholder = QFrame()
-        placeholder.setObjectName("subtleBox")
-        placeholder_layout = QHBoxLayout(placeholder)
-        placeholder_layout.setContentsMargins(12, 11, 12, 11)
-        placeholder_layout.addWidget(make_label("▦", "muted"))
-        calendar_text = make_label("Connect your Calendar service to this slot", "helper")
-        calendar_text.setWordWrap(True)
-        placeholder_layout.addWidget(calendar_text, 1)
-        layout.addWidget(placeholder)
+        self.calendar_refresh_button = refresh
+
+        layout.addLayout(_mini_header("▦", "Today's calendar", "#f2c66e", refresh))
+
+        self.calendar_status_label = make_label("CONNECTING","chip")
+        layout.addWidget(self.calendar_status_label)
+
+        self.calendar_summary_label = make_label("Loading today's events…", "helper")
+        self.calendar_summary_label.setWordWrap(True)
+        layout.addWidget(self.calendar_summary_label)
+        self.calendar_events_widget = QWidget()
+
+        self.calendar_events_layout = QVBoxLayout(self.calendar_events_widget)
+        self.calendar_events_layout.setContentsMargins(0,0,0,0)
+        self.calendar_events_layout.setSpacing(7)
+
+        layout.addWidget(self.calendar_events_widget)
         return panel
 
     def _build_action_panel(self) -> QFrame:
@@ -360,6 +368,7 @@ class DeskCompanionWindow(QMainWindow):
         self.clock_combo.currentIndexChanged.connect(self._on_clock_changed)
         self.goal_edit_button.clicked.connect(self._open_goal_editor)
         self.settings_button.clicked.connect(self._open_goal_editor)
+        self.calendar_refresh_button.clicked.connect(lambda _checked=False: self.calendar_refresh_requested.emit())
 
 
 
@@ -521,6 +530,106 @@ class DeskCompanionWindow(QMainWindow):
         self.notice_label.show()
 
 
+    # Calendar
+    @pyqtSlot(bool)
+    def set_calendar_busy(
+        self,
+        busy: bool,
+    ) -> None:
+        self.calendar_refresh_button.setEnabled(
+            not busy
+        )
+
+        self.calendar_refresh_button.setText(
+            "…" if busy else "↻"
+        )
+
+    @pyqtSlot(str)
+    def show_calendar_error(
+        self,
+        message: str,
+    ) -> None:
+        self.calendar_status_label.setText(
+            "UNAVAILABLE"
+        )
+
+        self.calendar_summary_label.setText(
+            "Calendar could not be loaded. "
+            + message
+        )
+
+    @pyqtSlot(dict)
+    def show_calendar(
+        self,
+        result: dict,
+    ) -> None:
+        while self.calendar_events_layout.count():
+            item = (
+                self.calendar_events_layout
+                .takeAt(0)
+            )
+
+            widget = item.widget()
+
+            if widget is not None:
+                widget.deleteLater()
+
+        if not result.get("connected", False):
+            self.calendar_status_label.setText(
+                "UNAVAILABLE"
+            )
+            return
+
+        events = list(
+            result.get("events", [])
+        )
+
+        past_count = int(
+            result.get("past_count", 0)
+        )
+
+        current_count = int(
+            result.get("current_count", 0)
+        )
+
+        upcoming_count = int(
+            result.get("upcoming_count", 0)
+        )
+
+        if current_count:
+            self.calendar_status_label.setText(
+                "EVENT NOW"
+            )
+        elif upcoming_count:
+            self.calendar_status_label.setText(
+                "UPCOMING"
+            )
+        else:
+            self.calendar_status_label.setText(
+                "CLEAR"
+            )
+
+        self.calendar_summary_label.setText(
+            f"{past_count} passed · "
+            f"{current_count} now · "
+            f"{upcoming_count} upcoming"
+        )
+
+        if not events:
+            empty = make_label(
+                "No events scheduled for today.",
+                "helper",
+            )
+
+            self.calendar_events_layout.addWidget(
+                empty
+            )
+            return
+
+        for event in events:
+            self.calendar_events_layout.addWidget(
+                CalendarEventCard(event)
+            )
 
 
     @pyqtSlot(str, str, bool)

@@ -247,3 +247,61 @@ class GoalDialog(QDialog):
             self.goal_input.toPlainText().strip(),
             self.nudges_checkbox.isChecked(),
         )
+
+
+class CalendarEventCard(QFrame):
+    """Compact visual row for a calendar event."""
+
+    def __init__(self, event: dict, parent: QWidget | None = None,) -> None:
+        super().__init__(parent)
+        status = str(event.get("status", "upcoming"))
+
+        colours = {
+            "past": ("#0d111b", "#263044", "#71809d"),
+            "happening_now": ("#10211c", "#2c7258", "#65d6a5"),
+            "upcoming": ("#171a26", "#4a4569", "#d3c4ff")
+        }
+
+        background, border, accent = (colours.get(status,colours["upcoming"],))
+
+        self.setStyleSheet(
+            "QFrame {"
+            f"background:{background};"
+            f"border:1px solid {border};"
+            "border-radius:9px;"
+            "}"
+            "QLabel {"
+            "border:none;"
+            "background:transparent;"
+            "}"
+        )
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(11,8,11,9)
+        layout.setSpacing(3)
+
+        header = QHBoxLayout()
+
+        title = make_label(str(event.get("summary","Untitled event")), "bodyStrong")
+        title.setWordWrap(True)
+
+        status_label = make_label(str(event.get("status_text", "")) ,"kicker")
+
+        status_label.setStyleSheet(f"color:{accent};")
+
+        header.addWidget(title, 1)
+        header.addWidget(status_label,0,Qt.AlignTop,)
+
+        layout.addLayout(header)
+
+        details = str(event.get("time_text", ""))
+
+        location = str(event.get("location", "")).strip()
+
+        if location:
+            details += f" · {location}"
+
+        details_label = make_label(details, "helper")   
+        details_label.setWordWrap(True)
+
+        layout.addWidget(details_label)

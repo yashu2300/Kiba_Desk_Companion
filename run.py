@@ -13,6 +13,8 @@ from frontend.theme import APP_STYLESHEET
 from backend.services.webcam_service import WebcamService
 from backend.services.face_recognition_service import FaceRecognitionService
 from backend.services.activity_monitor_service import ActivityMonitorService
+from backend.services.google_calendar_service import GoogleCalendarService
+
 
 from backend.slots import SlotController
 from backend.state_manager import CurrentStateManager
@@ -59,6 +61,7 @@ def main() -> int:
         owner_embedding_path=Path().cwd().joinpath("data", "vision", "owner_embedding.npy") 
     )
     activity_monitor = ActivityMonitorService(throttle_seconds=0.25)
+    calendar = GoogleCalendarService(clock=clock, timezone_name="Pacific/Auckland")
 
     window = DeskCompanionWindow()
     window.load_profile(profile["display_name"], profile["goal"], profile["automatic_nudges"])
@@ -66,6 +69,7 @@ def main() -> int:
         webcam,
         face_recognition,
         activity_monitor,
+        calendar,
         clock,
         state_manager,
         database,
@@ -78,6 +82,7 @@ def main() -> int:
     face_recognition.start()
     state_manager.start()
     activity_monitor.start()
+    calendar.start()
 
 
     window.showMaximized()

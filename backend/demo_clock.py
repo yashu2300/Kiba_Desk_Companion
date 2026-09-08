@@ -1,6 +1,7 @@
 """A monotonic clock that can be accelerated for demonstrations."""
 
 import time
+from datetime import datetime, timedelta, timezone
 from threading import RLock
 
 
@@ -15,6 +16,7 @@ class DemoClock:
         self._speed = float(speed)
         self._real_anchor = time.monotonic()
         self._simulated_anchor = 0.0
+        self._utc_anchor = datetime.now(timezone.utc)
 
     @property
     def speed(self) -> float:
@@ -33,6 +35,13 @@ class DemoClock:
                 self._simulated_anchor
                 + real_elapsed * self._speed
             )
+
+    def now_utc(self) -> datetime:
+        """Return the current simulated UTC date and time."""
+
+        return self._utc_anchor + timedelta(
+            seconds=self.elapsed_seconds()
+        )
 
     def set_speed(self, speed: float) -> None:
         """Change speed without causing elapsed time to jump."""

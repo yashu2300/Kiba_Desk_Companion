@@ -11,6 +11,7 @@ from PyQt5.QtCore import QObject, pyqtSlot
 from backend.services.webcam_service import WebcamService
 from backend.services.face_recognition_service import FaceRecognitionService
 from backend.services.activity_monitor_service import ActivityMonitorService
+from backend.services.google_calendar_service import GoogleCalendarService
 
 from backend.state_manager import CurrentStateManager
 from backend.database import Database
@@ -25,6 +26,7 @@ class SlotController(QObject):
         webcam: WebcamService,
         face_recognition: FaceRecognitionService,
         activity_monitor: ActivityMonitorService,
+        calendar: GoogleCalendarService,
         clock: DemoClock,
         state_manager: CurrentStateManager,
         database: Database,
@@ -36,6 +38,7 @@ class SlotController(QObject):
         self.webcam = webcam
         self.face_recognition = face_recognition
         self.activity_monitor = activity_monitor
+        self.calendar=calendar
         self.clock = clock
         self.state_manager = state_manager
         self.database = database
@@ -52,7 +55,7 @@ class SlotController(QObject):
         window.demo_clock_changed.connect(self.on_demo_clock_changed)
         window.goal_saved.connect(self.on_goal_saved)
         window.user_activity_detected.connect(self.state_manager.record_user_activity)
-
+        window.calendar_refresh_requested.connect(self.calendar.refresh)
 
         # Connect WebcamService Signals
         self.webcam.frame_ready.connect(window.set_camera_frame)
@@ -79,12 +82,19 @@ class SlotController(QObject):
         self.state_manager.state_changed.connect(window.show_current_state)
         self.state_manager.snapshot_created.connect(self._persist_state_snapshot)
 
+        # Calendar Related
+        self.calendar.calendar_updated.connect(window.show_calendar)
+        self.calendar.busy_changed.connect(window.set_calendar_busy)
+        self.calendar.error.connect(window.show_calendar_error)
+        self.calendar.error.connect(self._on_calendar_error)
+
 
         # Interconnected Serivce Signals
         self.webcam.analysis_frame_ready.connect(self.face_recognition.submit_frame)
         self.face_recognition.result_ready.connect(self.state_manager.update_vision_result)
         self.webcam.stopped.connect(self.state_manager.mark_vision_unavailable)
         self.activity_monitor.activity_detected.connect(self.state_manager.record_user_activity)
+        self.calendar.calendar_updated.connect(self.state_manager.update_calendar_result)
 
     # Webcam Services
     @pyqtSlot(bool)
@@ -175,7 +185,10 @@ class SlotController(QObject):
             )
 
 
-
+    # Calendar Slots
+    @pyqtSlot(str)
+    def _on_calendar_error(self,message: str) -> None:
+        print(f"[CALENDAR ERROR] {message}")
 
 
     @pyqtSlot()
@@ -187,5 +200,7 @@ class SlotController(QObject):
         self.state_manager.capture_snapshot("session_ended")
         self.state_manager.stop()
 
+        self.calendar.stop()
+        
         self.database.finish_app_session(self.session_id)
         self.database.close()

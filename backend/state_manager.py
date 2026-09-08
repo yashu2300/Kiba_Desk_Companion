@@ -35,6 +35,34 @@ class CurrentState:
     inactive_seconds: float = 0.0
     is_inactive: bool = False
 
+    calendar_connected: bool = False
+    calendar_day: str = ""
+
+    calendar_events_today: tuple[
+        dict[str, Any],
+        ...
+    ] = ()
+
+    current_calendar_event: (
+        dict[str, Any] | None
+    ) = None
+
+    next_calendar_event: (
+        dict[str, Any] | None
+    ) = None
+
+    seconds_until_next_event: (
+        float | None
+    ) = None
+
+    seconds_until_current_event_ends: (
+        float | None
+    ) = None
+
+    calendar_last_sync_utc: (
+        str | None
+    ) = None
+
     user_name: str = ""
     goal: str = ""
     automatic_nudges: bool = True
@@ -66,7 +94,22 @@ class CurrentState:
             self.inactive_seconds,
             3,
         )
+        if self.seconds_until_next_event is not None:
+            result["seconds_until_next_event"] = round(
+                self.seconds_until_next_event,
+                3,
+            )
 
+        if (
+            self.seconds_until_current_event_ends
+            is not None
+        ):
+            result[
+                "seconds_until_current_event_ends"
+            ] = round(
+                self.seconds_until_current_event_ends,
+                3,
+            )
         return result
 
 
@@ -189,6 +232,157 @@ class CurrentStateManager(QObject):
         self._timer = QTimer(self)
         self._timer.setInterval(1000)
         self._timer.timeout.connect(self._tick)
+
+    @staticmethod
+    def _calendar_signature(
+        events: tuple[dict[str, Any], ...],
+    ) -> tuple:
+        """Exclude countdowns that change every second."""
+
+        return tuple(
+            (
+                str(event.get("id", "")),
+                str(event.get("summary", "")),
+                str(event.get("start_utc", "")),
+                str(event.get("end_utc", "")),
+                str(event.get("status", "")),
+            )
+            for event in events
+        )
+
+    @pyqtSlot(dict)
+    def update_calendar_result(
+        self,
+        result: dict,
+    ) -> None:
+        """Update calendar state and record real transitions."""
+
+        previous = self.current
+
+        events = tuple(
+            dict(event)
+            for event in result.get("events", [])
+        )
+
+        current_event = result.get(
+            "current_event"
+        )
+
+        next_event = result.get(
+            "next_event"
+        )
+
+        proposed = replace(
+            previous,
+            calendar_connected=bool(
+                result.get("connected", False)
+            ),
+            calendar_day=str(
+                result.get("calendar_day", "")
+            ),
+            calendar_events_today=events,
+            current_calendar_event=(
+                dict(current_event)
+                if current_event
+                else None
+            ),
+            next_calendar_event=(
+                dict(next_event)
+                if next_event
+                else None
+            ),
+            seconds_until_next_event=(
+                float(
+                    next_event[
+                        "seconds_until_start"
+                    ]
+                )
+                if next_event
+                else None
+            ),
+            seconds_until_current_event_ends=(
+                float(
+                    current_event[
+                        "seconds_until_end"
+                    ]
+                )
+                if current_event
+                else None
+            ),
+            calendar_last_sync_utc=(
+                result.get("synced_at_utc")
+            ),
+        )
+
+        proposed = self._refresh_durations(
+            proposed
+        )
+
+        changed_fields: list[str] = []
+
+        if (
+            proposed.calendar_connected
+            != previous.calendar_connected
+        ):
+            changed_fields.append(
+                "calendar_connected"
+            )
+
+        if (
+            proposed.calendar_day
+            != previous.calendar_day
+        ):
+            changed_fields.append(
+                "calendar_day"
+            )
+
+        if (
+            self._calendar_signature(events)
+            != self._calendar_signature(
+                previous.calendar_events_today
+            )
+        ):
+            changed_fields.append(
+                "calendar_events_today"
+            )
+
+        previous_current_id = (
+            previous.current_calendar_event or {}
+        ).get("id")
+
+        current_id = (
+            proposed.current_calendar_event or {}
+        ).get("id")
+
+        if current_id != previous_current_id:
+            changed_fields.append(
+                "current_calendar_event"
+            )
+
+        previous_next_id = (
+            previous.next_calendar_event or {}
+        ).get("id")
+
+        next_id = (
+            proposed.next_calendar_event or {}
+        ).get("id")
+
+        if next_id != previous_next_id:
+            changed_fields.append(
+                "next_calendar_event"
+            )
+
+        self.current = proposed
+
+        self.state_changed.emit(
+            proposed.to_dict()
+        )
+
+        if changed_fields:
+            self.capture_snapshot(
+                "calendar_changed",
+                tuple(changed_fields),
+            )
 
     @pyqtSlot()
     def start(self) -> None:
