@@ -14,7 +14,7 @@ from backend.services.webcam_service import WebcamService
 from backend.services.face_recognition_service import FaceRecognitionService
 from backend.services.activity_monitor_service import ActivityMonitorService
 from backend.services.google_calendar_service import GoogleCalendarService
-
+from backend.services.llm_service import LLMService
 
 from backend.slots import SlotController
 from backend.state_manager import CurrentStateManager
@@ -62,19 +62,21 @@ def main() -> int:
     )
     activity_monitor = ActivityMonitorService(throttle_seconds=0.25)
     calendar = GoogleCalendarService(clock=clock, timezone_name="Pacific/Auckland")
+    llm = LLMService()
 
     window = DeskCompanionWindow()
     window.load_profile(profile["display_name"], profile["goal"], profile["automatic_nudges"])
     slot_controller = SlotController(
-        webcam,
-        face_recognition,
-        activity_monitor,
-        calendar,
-        clock,
-        state_manager,
-        database,
-        profile["user_id"],
-        session_id,
+        webcam=webcam,
+        face_recognition=face_recognition,
+        activity_monitor=activity_monitor,
+        calendar=calendar,
+        llm=llm,
+        clock=clock,
+        state_manager=state_manager,
+        database=database,
+        user_id=profile["user_id"],
+        session_id=session_id,
     )
 
     slot_controller.connect_window_to_slots(window)

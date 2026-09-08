@@ -3,11 +3,11 @@ from PyQt5.QtWidgets import (
     QVBoxLayout, QGridLayout, QHBoxLayout, QFrame,
     QPushButton, QComboBox, QLabel
 )
-from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot
+from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot, QTimer
 from PyQt5.QtGui import QImage
 
 from frontend.utils import _duration, _set_margins, make_label, make_panel, _mini_header
-from frontend.widgets import StatCell, CameraStage, ComposerTextEdit, GoalDialog, CalendarEventCard
+from frontend.widgets import StatCell, CameraStage, ComposerTextEdit, GoalDialog, CalendarEventCard, MessageBubble
 
 class DeskCompanionWindow(QMainWindow):
 
@@ -369,10 +369,21 @@ class DeskCompanionWindow(QMainWindow):
         self.goal_edit_button.clicked.connect(self._open_goal_editor)
         self.settings_button.clicked.connect(self._open_goal_editor)
         self.calendar_refresh_button.clicked.connect(lambda _checked=False: self.calendar_refresh_requested.emit())
+        self.send_button.clicked.connect(self._submit_text_message)
+        self.message_input.submit_requested.connect(self._submit_text_message)
 
 
 
-    # UI COMPONENT TRIGGERED SIGNALS -> SLOT TO CHANGE UI AND TRIGGER SERVICE SIGNALS
+    
+
+    def _show_notice(
+        self,
+        message: str,
+    ) -> None:
+        self.notice_label.setText(message)
+        self.notice_label.show()
+
+    # Web Cam Related
     def _toggle_camera(self):
         if self.camera_active or self.camera_starting: # If camera already active or is starting -> PAUSE/STOP
             self.camera_toggled.emit(False)
@@ -414,36 +425,6 @@ class DeskCompanionWindow(QMainWindow):
         self.camera_badge.style().unpolish(self.camera_badge)
         self.camera_badge.style().polish(self.camera_badge)
 
-    # Demo Setting Rleated
-    
-    def _on_clock_changed(self, _index: int) -> None:
-        label = self.clock_combo.currentText()
-        speed = float(
-            self.clock_combo.currentData()
-        )
-
-        self.clock_stat.set_value(
-            f"{speed:g}×"
-        )
-
-        self.demo_clock_changed.emit(
-            label,
-            speed,
-        )
-
-    def _open_goal_editor(self) -> None:
-        self.goal_editor_opened.emit()
-        dialog = GoalDialog(self.display_name, (self.goal if self.goal != "No goal set yet" else ""), self.automatic_nudges, self)
-
-        if dialog.exec_() != dialog.Accepted:
-            return
-
-        (self.display_name, self.goal, self.automatic_nudges) = dialog.values()
-
-        self.goal_label.setText(self.goal)
-
-        self.goal_saved.emit(self.display_name, self.goal, self.automatic_nudges)
-
     @pyqtSlot(QImage)
     def set_camera_frame(self, frame: QImage) -> None:
         self.camera_stage.set_frame(frame)
@@ -476,6 +457,8 @@ class DeskCompanionWindow(QMainWindow):
     def show_camera_stopped(self) -> None:
         self._set_camera_ui_stopped()
 
+
+    # Computer Vision
     @pyqtSlot(dict)
     def show_vision_result(self, result: dict) -> None:
         """Update the visual-context cards."""
@@ -490,8 +473,6 @@ class DeskCompanionWindow(QMainWindow):
         self.expression_stat.set_value(result.get("expression", "Unknown"))
         self.posture_stat.set_value(result.get("posture", "Unknown"))
 
-
-    # Computer Vision Related Slots
     @pyqtSlot(bool)
     def set_face_enrollment_busy(self,busy: bool) -> None:
         self.enroll_button.setEnabled(not busy)
@@ -520,15 +501,6 @@ class DeskCompanionWindow(QMainWindow):
         )
 
         self._show_notice(message)
-
-
-    def _show_notice(
-        self,
-        message: str,
-    ) -> None:
-        self.notice_label.setText(message)
-        self.notice_label.show()
-
 
     # Calendar
     @pyqtSlot(bool)
@@ -631,6 +603,34 @@ class DeskCompanionWindow(QMainWindow):
                 CalendarEventCard(event)
             )
 
+    # Demo Clock + Settings
+    def _on_clock_changed(self, _index: int) -> None:
+        label = self.clock_combo.currentText()
+        speed = float(
+            self.clock_combo.currentData()
+        )
+
+        self.clock_stat.set_value(
+            f"{speed:g}×"
+        )
+
+        self.demo_clock_changed.emit(
+            label,
+            speed,
+        )
+
+    def _open_goal_editor(self) -> None:
+        self.goal_editor_opened.emit()
+        dialog = GoalDialog(self.display_name, (self.goal if self.goal != "No goal set yet" else ""), self.automatic_nudges, self)
+
+        if dialog.exec_() != dialog.Accepted:
+            return
+
+        (self.display_name, self.goal, self.automatic_nudges) = dialog.values()
+
+        self.goal_label.setText(self.goal)
+
+        self.goal_saved.emit(self.display_name, self.goal, self.automatic_nudges)
 
     @pyqtSlot(str, str, bool)
     def load_profile(self, display_name: str, goal: str, automatic_nudges: bool) -> None:
@@ -668,3 +668,67 @@ class DeskCompanionWindow(QMainWindow):
         self.clock_stat.set_value(
             f"{speed:g}×"
         )
+
+    # LLM + Text Trigger
+    def _submit_text_message(self) -> None:
+        message = (self.message_input.toPlainText().strip())
+        if not message:
+            return
+
+        self.message_input.clear()
+
+        self.add_conversation_message("user",message,"TEXT")
+
+        self.message_send_requested.emit(message,"text")
+
+    def add_conversation_message(self,role: str, text: str, source: str) -> None:
+        self.empty_conversation.hide()
+
+        bubble = MessageBubble(role=role, text=text, meta=source)
+
+        insert_at = max(0, self.conversation_layout.count() - 1)
+
+        self.conversation_layout.insertWidget(insert_at, bubble)
+
+        def scroll_to_bottom() -> None:
+            scroll_bar = (self.conversation_scroll.verticalScrollBar())
+
+            scroll_bar.setValue(scroll_bar.maximum())
+
+        QTimer.singleShot(0, scroll_to_bottom)
+
+    @pyqtSlot(bool)
+    def set_llm_busy(self,busy: bool) -> None:
+        self.send_button.setEnabled(not busy)
+        self.send_button.setText("◌  Thinking…" if busy else "➤  Send")
+
+
+    @pyqtSlot(dict)
+    def show_llm_response(self, result: dict) -> None:
+        self.add_conversation_message("assistant", str(result.get("text_response", "")), "LLM",)
+
+        actions = list(result.get("actions", []))
+
+        visible_actions = [action for action in actions if action != "no_action"]
+
+        if visible_actions:
+            self.action_label.setText(" → ".join(visible_actions))
+        else:
+            self.action_label.setText("No movement requested")
+
+    @pyqtSlot(str)
+    def show_llm_error(
+        self,
+        message: str,
+    ) -> None:
+        self._show_notice(
+            "Kibo could not generate a "
+            f"response: {message}"
+        )
+
+
+
+
+
+
+    

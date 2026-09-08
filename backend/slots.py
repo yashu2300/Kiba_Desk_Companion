@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 from PyQt5.QtCore import QObject, pyqtSlot
 
@@ -12,6 +13,7 @@ from backend.services.webcam_service import WebcamService
 from backend.services.face_recognition_service import FaceRecognitionService
 from backend.services.activity_monitor_service import ActivityMonitorService
 from backend.services.google_calendar_service import GoogleCalendarService
+from backend.services.llm_service import LLMService
 
 from backend.state_manager import CurrentStateManager
 from backend.database import Database
@@ -27,6 +29,7 @@ class SlotController(QObject):
         face_recognition: FaceRecognitionService,
         activity_monitor: ActivityMonitorService,
         calendar: GoogleCalendarService,
+        llm: LLMService,
         clock: DemoClock,
         state_manager: CurrentStateManager,
         database: Database,
@@ -39,6 +42,7 @@ class SlotController(QObject):
         self.face_recognition = face_recognition
         self.activity_monitor = activity_monitor
         self.calendar=calendar
+        self.llm = llm
         self.clock = clock
         self.state_manager = state_manager
         self.database = database
@@ -56,6 +60,7 @@ class SlotController(QObject):
         window.goal_saved.connect(self.on_goal_saved)
         window.user_activity_detected.connect(self.state_manager.record_user_activity)
         window.calendar_refresh_requested.connect(self.calendar.refresh)
+        window.message_send_requested.connect(self.on_message_send_requested)
 
         # Connect WebcamService Signals
         self.webcam.frame_ready.connect(window.set_camera_frame)
@@ -87,6 +92,13 @@ class SlotController(QObject):
         self.calendar.busy_changed.connect(window.set_calendar_busy)
         self.calendar.error.connect(window.show_calendar_error)
         self.calendar.error.connect(self._on_calendar_error)
+
+        # LLM Related
+        self.llm.response_ready.connect(window.show_llm_response)
+        self.llm.response_ready.connect(self._on_llm_response)
+        self.llm.busy_changed.connect(window.set_llm_busy)
+        self.llm.error.connect(window.show_llm_error)
+        self.llm.error.connect(self._on_llm_error)
 
 
         # Interconnected Serivce Signals
@@ -190,6 +202,145 @@ class SlotController(QObject):
     def _on_calendar_error(self,message: str) -> None:
         print(f"[CALENDAR ERROR] {message}")
 
+    # LLM SLOTS
+    @pyqtSlot(str, str)
+    def on_message_send_requested(
+        self,
+        message: str,
+        source: str,
+    ) -> None:
+        turn_id = str(uuid4())
+
+        context = (
+            self.state_manager.context_payload(
+                history_limit=8
+            )
+        )
+
+        context["recent_messages"] = (
+            self.database.recent_messages(
+                self.session_id,
+                limit=8,
+            )
+        )
+
+        self.database.save_message(
+            session_id=self.session_id,
+            role="user",
+            content=message,
+            source=source,
+            turn_id=turn_id,
+            context_data=context,
+        )
+
+        self.llm.generate(
+            turn_id=turn_id,
+            user_message=message,
+            source=source,
+            trigger="user_message",
+            context=context,
+        )
+
+
+    def request_contextual_response(
+        self,
+        trigger: str,
+    ) -> None:
+        """
+        Entry point for a future automatic
+        contextual-event evaluator.
+        """
+
+        turn_id = str(uuid4())
+
+        context = (
+            self.state_manager.context_payload(
+                history_limit=8
+            )
+        )
+
+        context["recent_messages"] = (
+            self.database.recent_messages(
+                self.session_id,
+                limit=8,
+            )
+        )
+
+        self.database.save_message(
+            session_id=self.session_id,
+            role="event",
+            content=trigger,
+            source="contextual_event",
+            turn_id=turn_id,
+            context_data=context,
+        )
+
+        self.llm.generate(
+            turn_id=turn_id,
+            user_message=None,
+            source="contextual_event",
+            trigger=trigger,
+            context=context,
+        )
+
+
+    @pyqtSlot(dict)
+    def _on_llm_response(
+        self,
+        result: dict,
+    ) -> None:
+        actions = list(
+            result.get("actions", [])
+        )
+
+        self.database.save_message(
+            session_id=self.session_id,
+            role="assistant",
+            content=str(
+                result.get(
+                    "text_response",
+                    "",
+                )
+            ),
+            source="llm",
+            turn_id=str(
+                result.get("turn_id", "")
+            ),
+            action_data={
+                "actions": actions,
+                "model": result.get("model"),
+            },
+        )
+        print(
+            f"[LLM MODEL] "
+            f"{result.get('model', 'Unknown')}"
+        )
+
+        print(
+            f"[LLM TEXT] "
+            f"{result.get('text_response', '')}"
+        )
+
+        print(
+            f"[LLM ACTIONS] {actions}"
+        )
+
+        for action in actions:
+            if action != "no_action":
+                print(
+                    f"[ACTION SIMULATED] "
+                    f"{action}"
+                )
+
+
+    @pyqtSlot(str)
+    def _on_llm_error(
+        self,
+        message: str,
+    ) -> None:
+        print(
+            f"[LLM ERROR] {message}"
+        )
 
     @pyqtSlot()
     def shutdown(self) -> None:
@@ -201,6 +352,10 @@ class SlotController(QObject):
         self.state_manager.stop()
 
         self.calendar.stop()
+        self.llm.stop()
         
         self.database.finish_app_session(self.session_id)
         self.database.close()
+
+
+    

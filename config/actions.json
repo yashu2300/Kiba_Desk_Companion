@@ -1,0 +1,54 @@
+{
+  "no_action": {
+    "description": "Give only a verbal response and do not move the robot.",
+    "exclusive": true
+  },
+  "stand_up": {
+    "description": "Move from rest into a stable standing pose.",
+    "exclusive": false
+  },
+  "sit_down": {
+    "description": "Move into a seated pose.",
+    "exclusive": false
+  },
+  "rest": {
+    "description": "Move into the low-power resting pose.",
+    "exclusive": false
+  },
+  "balance": {
+    "description": "Adopt the stable balanced standing pose.",
+    "exclusive": false
+  },
+  "walk_forward": {
+    "description": "Walk forward a short, safe demonstration distance.",
+    "exclusive": false
+  },
+  "walk_backward": {
+    "description": "Walk backward a short, safe demonstration distance.",
+    "exclusive": false
+  },
+  "turn_left": {
+    "description": "Turn left in place by a small demonstration amount.",
+    "exclusive": false
+  },
+  "turn_right": {
+    "description": "Turn right in place by a small demonstration amount.",
+    "exclusive": false
+  },
+  "wave": {
+    "description": "Perform a short friendly greeting gesture.",
+    "exclusive": false
+  },
+  "stretch": {
+    "description": "Perform a short stretching gesture.",
+    "exclusive": false
+  },
+  "guard_mode": {
+    "description": "Enter desk-guard operating mode. This action must be returned alone.",
+    "exclusive": true
+  },
+  "play_mode": {
+    "description": "Enter playful companion operating mode. This action must be returned alone.",
+    "exclusive": true
+  }
+}
