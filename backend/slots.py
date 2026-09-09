@@ -48,10 +48,13 @@ class SlotController(QObject):
         self.database = database
         self.user_id = user_id
         self.session_id = session_id
+        self.window : DeskCompanionWindow | None = None
+        self._context_message_floor_id : int | None = None
 
 
     def connect_window_to_slots(self, window:DeskCompanionWindow):
         """ Wire every frontend/pyqtSignals and service result signals in ONE PLACE"""
+        self.window = window
 
         # Connect Main Window Signals
         window.camera_toggled.connect(self.on_camera_toggled)
@@ -61,6 +64,7 @@ class SlotController(QObject):
         window.user_activity_detected.connect(self.state_manager.record_user_activity)
         window.calendar_refresh_requested.connect(self.calendar.refresh)
         window.message_send_requested.connect(self.on_message_send_requested)
+        window.reset_conversation_requested.connect(self.on_conversation_reset_requested)
 
         # Connect WebcamService Signals
         self.webcam.frame_ready.connect(window.set_camera_frame)
@@ -172,11 +176,66 @@ class SlotController(QObject):
 
     @pyqtSlot(str, str, bool)
     def on_goal_saved(self, display_name: str, goal: str, automatic_nudges: bool) -> None:
-        self.database.save_profile(self.user_id, display_name, goal, automatic_nudges)
+        profile = self.database.save_or_switch_profile(current_user_id=self.user_id, display_name=display_name, goal_text=goal, automatic_nudges=automatic_nudges)
 
-        self.state_manager.update_profile(display_name, goal, automatic_nudges)
+        if profile["switched"]:
+            # Record and close the previous user's session.
+            self.state_manager.capture_snapshot("session_ended")
 
-        print("[DATABASE] User profile and goal saved.")
+            self.database.finish_app_session(self.session_id)
+
+            self.user_id = int( profile["user_id"])
+
+            # Switching users starts a separate session.
+            self.session_id = (self.database.start_app_session(self.user_id,self.clock.speed))
+
+            # The new session has no chat-history cutoff.
+            self._context_message_floor_id = None
+            self.state_manager.switch_profile(session_id=self.session_id, 
+                                              user_name=str(profile["display_name"]),
+                                              goal=str(profile["goal"]),
+                                              automatic_nudges=bool(profile["automatic_nudges"])
+            )
+
+        else:
+            self.state_manager.update_profile(
+                str(profile["display_name"]),
+                str(profile["goal"]),
+                bool(
+                    profile["automatic_nudges"]
+                ),
+            )
+
+        if self.window is not None:
+            self.window.load_profile(
+                str(profile["display_name"]),
+                str(profile["goal"]),
+                bool(
+                    profile["automatic_nudges"]
+                ),
+            )
+
+            if profile["switched"]:
+                # Do not display messages belonging to
+                # the previous user's session.
+                self.window.clear_conversation()
+
+        status = (
+            "created"
+            if profile["created"]
+            else (
+                "switched"
+                if profile["switched"]
+                else "updated"
+            )
+        )
+
+        print(
+            "[DATABASE] User profile "
+            f"{status}: "
+            f"{profile['display_name']} "
+            f"(user_id={self.user_id})."
+        )
 
 
     @pyqtSlot(dict)
@@ -203,6 +262,15 @@ class SlotController(QObject):
         print(f"[CALENDAR ERROR] {message}")
 
     # LLM SLOTS
+    @pyqtSlot()
+    def on_conversation_reset_requested(self) -> None:
+        """
+        Set the LLM history boundary without deleting
+        anything from the database.
+        """
+        self._context_message_floor_id = (self.database.latest_message_id(self.session_id))
+        print("[LLM CONTEXT] Conversation history reset; database messages retained.")
+
     @pyqtSlot(str, str)
     def on_message_send_requested(
         self,
@@ -221,6 +289,9 @@ class SlotController(QObject):
             self.database.recent_messages(
                 self.session_id,
                 limit=8,
+                after_message_id=(
+                    self._context_message_floor_id
+                ),
             )
         )
 
@@ -263,6 +334,9 @@ class SlotController(QObject):
             self.database.recent_messages(
                 self.session_id,
                 limit=8,
+                after_message_id=(
+                    self._context_message_floor_id
+                ),
             )
         )
 

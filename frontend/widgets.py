@@ -202,14 +202,15 @@ class GoalDialog(QDialog):
         )
         title = make_label("Set the companion's direction", "panelTitle")
         description = make_label(
-            "Your name, active goal, and nudge preference "
-            "are stored in the Desk Companion database.",
+            "Your profile, active goal, and nudge preference are stored "
+            "in the Desk Companion database. Enter a different saved "
+            "profile name to switch users, or a new name to create one. ",
             "muted",
         )
         description.setWordWrap(True)
 
         self.name_input = QLineEdit(display_name)
-        self.name_input.setPlaceholderText("Display name (optional)")
+        self.name_input.setPlaceholderText("Profile Name")
         self.goal_input = QTextEdit(goal)
         self.goal_input.setPlaceholderText("What goal should Kibo help with?")
         self.goal_input.setFixedHeight(95)
@@ -226,7 +227,7 @@ class GoalDialog(QDialog):
         layout.addWidget(title)
         layout.addWidget(description)
         layout.addSpacing(3)
-        layout.addWidget(make_label("DISPLAY NAME", "kicker"))
+        layout.addWidget(make_label("PROFILE NAME", "kicker"))
         layout.addWidget(self.name_input)
         layout.addWidget(make_label("INITIAL GOAL", "kicker"))
         layout.addWidget(self.goal_input)
@@ -235,10 +236,16 @@ class GoalDialog(QDialog):
         layout.addWidget(buttons)
 
     def _validate_and_accept(self) -> None:
-        if len(self.goal_input.toPlainText().strip()) < 3:
+        if not self.name_input.text().strip():
+            self.name_input.setFocus()
+            self.name_input.setStyleSheet("border-color:#ed5d69;")
+            return
+
+        if (len(self.goal_input.toPlainText().strip()) < 3):
             self.goal_input.setFocus()
             self.goal_input.setStyleSheet("border-color:#ed5d69;")
             return
+        
         self.accept()
 
     def values(self) -> tuple[str, str, bool]:

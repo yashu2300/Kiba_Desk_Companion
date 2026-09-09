@@ -327,12 +327,31 @@ class Database:
         self,
     ) -> dict[str, Any]:
         with self._sessions.begin() as session:
+            # Load the profile used most recently.
             user = session.scalar(
                 select(UserEntity)
-                .order_by(UserEntity.id)
+                .join(
+                    AppSessionEntity,
+                    AppSessionEntity.user_id
+                    == UserEntity.id,
+                )
+                .order_by(
+                    AppSessionEntity.started_at.desc(),
+                    AppSessionEntity.id.desc(),
+                )
                 .limit(1)
             )
 
+            # A user may exist before any session exists.
+            if user is None:
+                user = session.scalar(
+                    select(UserEntity)
+                    .order_by(UserEntity.id)
+                    .limit(1)
+                )
+
+            # Create the first empty user when the
+            # database has never been used.
             if user is None:
                 user = UserEntity(
                     display_name="",
@@ -342,30 +361,207 @@ class Database:
                 session.add(user)
                 session.flush()
 
-            goal = session.scalar(
+            return self._profile_payload(
+                session,
+                user,
+            )
+
+    @staticmethod
+    def _profile_payload(
+        session,
+        user: UserEntity,
+    ) -> dict[str, Any]:
+        """Return one user and their currently active goal."""
+
+        goal = session.scalar(
+            select(GoalEntity)
+            .where(
+                GoalEntity.user_id == user.id,
+                GoalEntity.is_active.is_(True),
+            )
+            .order_by(
+                GoalEntity.created_at.desc(),
+                GoalEntity.id.desc(),
+            )
+            .limit(1)
+        )
+
+        return {
+            "user_id": user.id,
+            "display_name": user.display_name,
+            "goal": (
+                goal.goal_text
+                if goal is not None
+                else ""
+            ),
+            "automatic_nudges": (
+                user.automatic_nudges
+            ),
+        }
+
+    def save_or_switch_profile(
+        self,
+        current_user_id: int,
+        display_name: str,
+        goal_text: str,
+        automatic_nudges: bool,
+    ) -> dict[str, Any]:
+        """
+        Update the current profile or switch to another one.
+
+        Profile-name matching is case-insensitive. Therefore,
+        'Demo' and 'demo' refer to the same database user.
+
+        When switching to an existing user, that user's saved
+        goal and nudge preference are loaded rather than being
+        overwritten with the previous user's settings.
+        """
+
+        cleaned_name = display_name.strip()
+
+        if not cleaned_name:
+            raise ValueError(
+                "A profile name is required."
+            )
+
+        with self._sessions.begin() as session:
+            current_user = session.get(
+                UserEntity,
+                current_user_id,
+            )
+
+            if current_user is None:
+                raise ValueError(
+                    f"User {current_user_id} does not exist."
+                )
+
+            target_user = current_user
+            created = False
+            switching_to_existing = False
+
+            current_name = (
+                current_user.display_name.strip()
+            )
+
+            # A different name means create or switch profiles.
+            if (
+                current_name
+                and current_name.casefold()
+                != cleaned_name.casefold()
+            ):
+                users = session.scalars(
+                    select(UserEntity)
+                    .order_by(UserEntity.id)
+                ).all()
+
+                target_user = next(
+                    (
+                        user
+                        for user in users
+                        if (
+                            user.display_name
+                            .strip()
+                            .casefold()
+                            == cleaned_name.casefold()
+                        )
+                    ),
+                    None,
+                )
+
+                if target_user is None:
+                    # The name does not exist, so create
+                    # a separate user.
+                    target_user = UserEntity(
+                        display_name=cleaned_name,
+                        automatic_nudges=(
+                            automatic_nudges
+                        ),
+                    )
+
+                    session.add(target_user)
+                    session.flush()
+
+                    created = True
+                else:
+                    # Load this user's saved settings instead
+                    # of copying the previous user's settings.
+                    switching_to_existing = True
+
+            if not switching_to_existing:
+                target_user.display_name = (
+                    cleaned_name
+                )
+
+                target_user.automatic_nudges = (
+                    automatic_nudges
+                )
+
+            active_goal = session.scalar(
                 select(GoalEntity)
                 .where(
-                    GoalEntity.user_id == user.id,
+                    GoalEntity.user_id
+                    == target_user.id,
                     GoalEntity.is_active.is_(True),
                 )
                 .order_by(
-                    GoalEntity.created_at.desc()
+                    GoalEntity.created_at.desc(),
+                    GoalEntity.id.desc(),
                 )
                 .limit(1)
             )
 
-            return {
-                "user_id": user.id,
-                "display_name": user.display_name,
-                "goal": (
-                    goal.goal_text
-                    if goal
-                    else ""
-                ),
-                "automatic_nudges": (
-                    user.automatic_nudges
-                ),
-            }
+            cleaned_goal = goal_text.strip()
+
+            # Only update the goal when updating the current
+            # profile or creating a completely new one.
+            if (
+                not switching_to_existing
+                and (
+                    active_goal is None
+                    or active_goal.goal_text
+                    != cleaned_goal
+                )
+            ):
+                session.execute(
+                    update(GoalEntity)
+                    .where(
+                        GoalEntity.user_id
+                        == target_user.id,
+                        GoalEntity.is_active.is_(
+                            True
+                        ),
+                    )
+                    .values(
+                        is_active=False,
+                        ended_at=utc_now(),
+                    )
+                )
+
+                session.add(
+                    GoalEntity(
+                        user_id=target_user.id,
+                        goal_text=cleaned_goal,
+                    )
+                )
+
+            session.flush()
+
+            result = self._profile_payload(
+                session,
+                target_user,
+            )
+
+            result.update(
+                {
+                    "created": created,
+                    "switched": (
+                        target_user.id
+                        != current_user_id
+                    ),
+                }
+            )
+
+            return result
 
     def save_profile(
         self,
@@ -565,16 +761,26 @@ class Database:
         self,
         session_id: int,
         limit: int = 20,
+        after_message_id: int | None = None,
     ) -> list[dict[str, Any]]:
         with self._sessions() as session:
+            conditions = [
+                MessageEntity.session_id
+                == session_id
+            ]
+
+            if after_message_id is not None:
+                conditions.append(
+                    MessageEntity.id
+                    > after_message_id
+                )
+
             rows = session.scalars(
                 select(MessageEntity)
-                .where(
-                    MessageEntity.session_id
-                    == session_id
-                )
+                .where(*conditions)
                 .order_by(
-                    MessageEntity.created_at.desc()
+                    MessageEntity.created_at.desc(),
+                    MessageEntity.id.desc(),
                 )
                 .limit(limit)
             ).all()
@@ -593,6 +799,25 @@ class Database:
                 }
                 for row in reversed(rows)
             ]
+
+    def latest_message_id(
+        self,
+        session_id: int,
+    ) -> int | None:
+        """Return the newest stored message in this session."""
+
+        with self._sessions() as session:
+            return session.scalar(
+                select(MessageEntity.id)
+                .where(
+                    MessageEntity.session_id
+                    == session_id
+                )
+                .order_by(
+                    MessageEntity.id.desc()
+                )
+                .limit(1)
+            )
 
     def close(self) -> None:
         self.engine.dispose()

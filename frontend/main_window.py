@@ -293,7 +293,7 @@ class DeskCompanionWindow(QMainWindow):
 
         self.reset_button = QPushButton("↻")
         self.reset_button.setObjectName("linkButton")
-        self.reset_button.setToolTip("Clear visible conversation")
+        self.reset_button.setToolTip("Clear visible chat and reset LLM conversation context")
         heading_layout.addWidget(self.reset_button)
         main_layout.addWidget(heading_widget)
 
@@ -371,9 +371,7 @@ class DeskCompanionWindow(QMainWindow):
         self.calendar_refresh_button.clicked.connect(lambda _checked=False: self.calendar_refresh_requested.emit())
         self.send_button.clicked.connect(self._submit_text_message)
         self.message_input.submit_requested.connect(self._submit_text_message)
-
-
-
+        self.reset_button.clicked.connect(self._reset_conversation)
     
 
     def _show_notice(
@@ -626,11 +624,9 @@ class DeskCompanionWindow(QMainWindow):
         if dialog.exec_() != dialog.Accepted:
             return
 
-        (self.display_name, self.goal, self.automatic_nudges) = dialog.values()
+        (display_name, goal, automatic_nudges) = dialog.values()
 
-        self.goal_label.setText(self.goal)
-
-        self.goal_saved.emit(self.display_name, self.goal, self.automatic_nudges)
+        self.goal_saved.emit(display_name, goal, automatic_nudges)
 
     @pyqtSlot(str, str, bool)
     def load_profile(self, display_name: str, goal: str, automatic_nudges: bool) -> None:
@@ -699,6 +695,9 @@ class DeskCompanionWindow(QMainWindow):
 
     @pyqtSlot(bool)
     def set_llm_busy(self,busy: bool) -> None:
+        self.reset_button.setEnabled(not busy)
+        self.goal_edit_button.setEnabled(not busy)
+        self.settings_button.setEnabled(not busy)
         self.send_button.setEnabled(not busy)
         self.send_button.setText("◌  Thinking…" if busy else "➤  Send")
 
@@ -726,7 +725,49 @@ class DeskCompanionWindow(QMainWindow):
             f"response: {message}"
         )
 
+    @pyqtSlot()
+    def clear_conversation(self) -> None:
+        """
+        Remove message bubbles from the interface.
 
+        This method does not communicate with the database.
+        """
+
+        for index in reversed(
+            range(
+                self.conversation_layout.count()
+            )
+        ):
+            item = (
+                self.conversation_layout.itemAt(
+                    index
+                )
+            )
+
+            widget = item.widget()
+
+            if isinstance(
+                widget,
+                MessageBubble,
+            ):
+                self.conversation_layout.removeWidget(
+                    widget
+                )
+
+                widget.deleteLater()
+
+        self.empty_conversation.show()
+
+
+    def _reset_conversation(self) -> None:
+        """
+        Clear the interface and notify the controller
+        that earlier messages must not be sent to the LLM.
+        """
+
+        self.clear_conversation()
+
+        self.reset_conversation_requested.emit()
 
 
 

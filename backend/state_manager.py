@@ -177,6 +177,11 @@ class ShortTermStateMemory:
             for snapshot in snapshots
         ]
 
+    def clear(self) -> None:
+        """Remove state history belonging to the previous session."""
+
+        self._snapshots.clear()
+        self._next_sequence = 1
 
 class CurrentStateManager(QObject):
     """Maintain current state and record meaningful transitions."""
@@ -692,6 +697,58 @@ class CurrentStateManager(QObject):
             automatic_nudges=automatic_nudges,
         )
 
+    @pyqtSlot(int, str, str, bool)
+    def switch_profile(
+        self,
+        session_id: int,
+        user_name: str,
+        goal: str,
+        automatic_nudges: bool,
+    ) -> None:
+        """Start clean short-term state for another user."""
+
+        elapsed = self.clock.elapsed_seconds()
+
+        self.memory.clear()
+        self._candidates.clear()
+
+        self._last_activity_at = elapsed
+
+        self._owner_away_started_at = (
+            elapsed
+            if self.current.owner_at_desk is False
+            else None
+        )
+
+        # Preserve current shared sensor/calendar data,
+        # but replace user-specific session information.
+        self.current = replace(
+            self.current,
+            session_id=session_id,
+            observed_at_utc=utc_now(),
+            simulated_elapsed_s=elapsed,
+            user_name=user_name,
+            goal=goal,
+            automatic_nudges=automatic_nudges,
+            away_seconds=0.0,
+            inactive_seconds=0.0,
+            is_inactive=False,
+        )
+
+        self.state_changed.emit(
+            self.current.to_dict()
+        )
+
+        self.capture_snapshot(
+            "session_started",
+            (
+                "session_id",
+                "user_name",
+                "goal",
+                "automatic_nudges",
+            ),
+    )
+    
     @pyqtSlot()
     def _tick(self) -> None:
         previous_inactive = self.current.is_inactive
