@@ -57,9 +57,9 @@ def main() -> int:
         clock=clock,
         session_id=session_id,
         minimum_break_s=60.0,
+        inactivity_threshold_s=300.0,
         negative_confidence_threshold=0.70,
     )
-    
     # Created Services
     webcam = WebcamService(camera_index=0, target_fps=24, analysis_fps=4)
     face_recognition = FaceRecognitionService(
@@ -79,6 +79,7 @@ def main() -> int:
         calendar_lead_s=600.0,
         negative_emotion_trigger_s=180.0,
         minimum_nudge_interval_real_s=15.0,
+        post_break_nudge_s=600.0,
     )
     window = DeskCompanionWindow()
     window.load_profile(profile["display_name"], profile["goal"], profile["automatic_nudges"])
