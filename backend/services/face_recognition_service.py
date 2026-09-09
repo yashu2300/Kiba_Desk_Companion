@@ -332,16 +332,13 @@ class _FaceVisionWorker(QObject):
             result = {
                 "face_present": bool(detected_faces),
                 "face_count": len(detected_faces),
-                "presence": (
-                    "At desk"
-                    if detected_faces
-                    else "Away"
-                ),
+                "presence": "At desk" if detected_faces else "Away",
                 "identity": identity_summary,
                 "expression": expression_summary,
-                "owner_enrolled": (
-                    self._owner_embedding is not None
-                ),
+                "identity_confidence": primary.get("similarity") if primary else None,
+                "expression_confidence": primary.get("expression_confidence", 0.0) if primary else 0.0,
+                "detection_confidence": primary.get("detection_confidence", 0.0) if primary else 0.0,
+                "owner_enrolled": self._owner_embedding is not None,
                 "faces": detected_faces,
             }
 

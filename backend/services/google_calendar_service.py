@@ -71,7 +71,6 @@ class _CalendarFetchThread(QThread):
         self.timezone_name = timezone_name
         self.day_start_utc = day_start_utc
         self.day_end_utc = day_end_utc
-        self._connection_retry_count = 0
 
     def _load_credentials(self):
         from google.auth.transport.requests import Request
@@ -139,6 +138,8 @@ class _CalendarFetchThread(QThread):
 
             stage = "loading or refreshing OAuth credentials"
             credentials = self._load_credentials()
+            if self.isInterruptionRequested():
+                return
 
             stage = "building Google Calendar client"
 
@@ -177,8 +178,8 @@ class _CalendarFetchThread(QThread):
                 .execute(num_retries=2)
             )
 
-            # Keep the remainder of your existing
-            # event-processing code here.
+            if self.isInterruptionRequested():
+                return
 
             local_zone = ZoneInfo(
                 self.timezone_name
@@ -276,11 +277,12 @@ class _CalendarFetchThread(QThread):
             )
 
         except Exception as error:
+            if self.isInterruptionRequested():
+                return
+
             self.fetch_failed.emit(
-                f"{stage} failed: "
-                f"{type(error).__name__}: {error}"
+                f"{stage} failed: {type(error).__name__}: {error}"
             )
-        
 
 
 class GoogleCalendarService(QObject):
@@ -335,6 +337,7 @@ class GoogleCalendarService(QObject):
         ) = None
 
         self._pending_refresh = False
+        self._connection_retry_count = 0
 
         self._status_timer = QTimer(self)
         self._status_timer.setInterval(1000)
@@ -344,24 +347,27 @@ class GoogleCalendarService(QObject):
 
     @pyqtSlot()
     def start(self) -> None:
+        self._stopping = False
         self._status_timer.start()
         self.refresh()
 
+
     @pyqtSlot()
     def stop(self) -> None:
+        self._stopping = True
+        self._pending_refresh = False
         self._status_timer.stop()
 
         worker = self._worker
 
-        if (
-            worker is not None
-            and worker.isRunning()
-        ):
+        if worker is not None and worker.isRunning():
             worker.requestInterruption()
             worker.wait(5000)
 
     @pyqtSlot()
     def refresh(self) -> None:
+        if self._stopping:
+            return
         if (
             self._worker is not None
             and self._worker.isRunning()
@@ -421,10 +427,10 @@ class GoogleCalendarService(QObject):
         self._worker.start()
 
     @pyqtSlot(object)
-    def _on_events_loaded(
-        self,
-        result: object,
-    ) -> None:
+    def _on_events_loaded(self, result: object) -> None:
+        if self._stopping:
+            return
+        
         self._connection_retry_count = 0
         payload = dict(result)
 
@@ -448,6 +454,8 @@ class GoogleCalendarService(QObject):
         self,
         message: str,
     ) -> None:
+        if self._stopping:
+            return
         self._connected = False
         self.error.emit(message)
         self._publish()
@@ -473,7 +481,7 @@ class GoogleCalendarService(QObject):
         if worker is not None:
             worker.deleteLater()
 
-        if self._pending_refresh:
+        if self._pending_refresh and not self._stopping:
             self._pending_refresh = False
 
             QTimer.singleShot(

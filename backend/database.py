@@ -257,6 +257,23 @@ class StateSnapshotEntity(Base):
     )
 
 
+class SessionPeriodEntity(Base):
+    """One completed period measured using the simulated clock."""
+
+    __tablename__ = "session_periods"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("app_sessions.id"), index=True)
+    period_type: Mapped[str] = mapped_column(String(40), index=True)
+    started_at_simulated: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    ended_at_simulated: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    started_elapsed_s: Mapped[float] = mapped_column(Float)
+    ended_elapsed_s: Mapped[float] = mapped_column(Float)
+    duration_s: Mapped[float] = mapped_column(Float)
+    period_data: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class Database:
     def __init__(
         self,
@@ -799,6 +816,25 @@ class Database:
                 }
                 for row in reversed(rows)
             ]
+
+    def save_session_period(self, period: dict[str, Any]) -> int:
+        """Store one completed simulated-time period."""
+
+        with self._sessions.begin() as session:
+            entity = SessionPeriodEntity(
+                session_id=int(period["session_id"]),
+                period_type=str(period["period_type"]),
+                started_at_simulated=datetime.fromisoformat(period["started_at_simulated_utc"]),
+                ended_at_simulated=datetime.fromisoformat(period["ended_at_simulated_utc"]),
+                started_elapsed_s=float(period["started_elapsed_s"]),
+                ended_elapsed_s=float(period["ended_elapsed_s"]),
+                duration_s=float(period["duration_s"]),
+                period_data=dict(period.get("details", {})),
+            )
+
+            session.add(entity)
+            session.flush()
+            return entity.id
 
     def latest_message_id(
         self,

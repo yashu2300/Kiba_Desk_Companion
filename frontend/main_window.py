@@ -36,7 +36,7 @@ class DeskCompanionWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Kibo - Desk Companion")
+        self.setWindowTitle("Kiba - Desk Companion")
         desktop_geometry = QApplication.desktop().availableGeometry()
         self.resize(desktop_geometry.width(), desktop_geometry.height())
         
@@ -103,7 +103,7 @@ class DeskCompanionWindow(QMainWindow):
         title_box = QVBoxLayout()
         title_box.setSpacing(1)
         title_box.addWidget(make_label("Dashboard", "eyebrow"))
-        title_box.addWidget(make_label("Kibo Desk Companion", "appTitle"))
+        title_box.addWidget(make_label("Kiba Desk Companion", "appTitle"))
 
         layout.addWidget(brand_mark)
         layout.addLayout(title_box)
@@ -287,7 +287,7 @@ class DeskCompanionWindow(QMainWindow):
         _set_margins(heading_layout, 18, 15, 18, 14)
         title_box = QVBoxLayout()
         title_box.setSpacing(3)
-        title_box.addWidget(make_label("Chat with Kibo", "panelTitle"))
+        title_box.addWidget(make_label("Chat with Kiba", "panelTitle"))
         heading_layout.addLayout(title_box)
         heading_layout.addStretch(1)
 
@@ -341,7 +341,7 @@ class DeskCompanionWindow(QMainWindow):
         composer_layout.setSpacing(8)
         self.message_input = ComposerTextEdit()
         self.message_input.setObjectName("composerInput")
-        self.message_input.setPlaceholderText("Message Kibo…")
+        self.message_input.setPlaceholderText("Message Kiba…")
         composer_layout.addWidget(self.message_input)
 
         actions = QHBoxLayout()
@@ -721,7 +721,7 @@ class DeskCompanionWindow(QMainWindow):
         message: str,
     ) -> None:
         self._show_notice(
-            "Kibo could not generate a "
+            "Kiba could not generate a "
             f"response: {message}"
         )
 

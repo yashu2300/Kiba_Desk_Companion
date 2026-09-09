@@ -15,6 +15,7 @@ from backend.services.face_recognition_service import FaceRecognitionService
 from backend.services.activity_monitor_service import ActivityMonitorService
 from backend.services.google_calendar_service import GoogleCalendarService
 from backend.services.llm_service import LLMService
+from backend.services.session_metrics_service import SessionMetricsService
 
 from backend.slots import SlotController
 from backend.state_manager import CurrentStateManager
@@ -51,6 +52,12 @@ def main() -> int:
         # Five simulated minutes.
         inactivity_threshold_s=300.0,
     )
+    session_metrics = SessionMetricsService(
+        clock=clock,
+        session_id=session_id,
+        minimum_break_s=60.0,
+        negative_confidence_threshold=0.70,
+    )
     
     # Created Services
     webcam = WebcamService(camera_index=0, target_fps=24, analysis_fps=4)
@@ -70,6 +77,7 @@ def main() -> int:
         webcam=webcam,
         face_recognition=face_recognition,
         activity_monitor=activity_monitor,
+        session_metrics=session_metrics,
         calendar=calendar,
         llm=llm,
         clock=clock,

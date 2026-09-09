@@ -30,6 +30,9 @@ class CurrentState:
     face_count: int = 0
     identity: str = "Unknown"
     expression: str = "Unknown"
+    identity_confidence: float | None = None
+    expression_confidence: float = 0.0
+    detection_confidence: float = 0.0
 
     away_seconds: float = 0.0
     inactive_seconds: float = 0.0
@@ -94,6 +97,23 @@ class CurrentState:
             self.inactive_seconds,
             3,
         )
+
+        if self.identity_confidence is not None:
+            result["identity_confidence"] = round(
+                self.identity_confidence,
+                3,
+            )
+
+        result["expression_confidence"] = round(
+            self.expression_confidence,
+            3,
+        )
+
+        result["detection_confidence"] = round(
+            self.detection_confidence,
+            3,
+        )
+
         if self.seconds_until_next_event is not None:
             result["seconds_until_next_event"] = round(
                 self.seconds_until_next_event,
@@ -491,6 +511,7 @@ class CurrentStateManager(QObject):
     def _commit(
         self,
         trigger: str,
+        snapshot_fields: tuple[str, ...] | None = None,
         **updates: Any,
     ) -> None:
         previous = self.current
@@ -514,11 +535,21 @@ class CurrentStateManager(QObject):
             proposed
         )
 
-        changed_fields = tuple(
+        all_changed_fields = tuple(
             field_name
             for field_name in updates
             if getattr(previous, field_name)
             != getattr(proposed, field_name)
+        )
+
+        changed_fields = (
+            all_changed_fields
+            if snapshot_fields is None
+            else tuple(
+                field_name
+                for field_name in all_changed_fields
+                if field_name in snapshot_fields
+            )
         )
 
         self.current = proposed
@@ -566,6 +597,24 @@ class CurrentStateManager(QObject):
             for face in faces
         )
 
+        identity_value = str(result.get("identity", "Unknown"))
+        expression_value = str(result.get("expression", "Unknown"))
+        accepted_identity = self._debounced("identity", identity_value, 2)
+        accepted_expression = self._debounced("expression", expression_value, 3)
+
+        identity_confidence = (
+            float(result["identity_confidence"])
+            if result.get("identity_confidence") is not None
+            else None
+        )
+        expression_confidence = float(result.get("expression_confidence", 0.0))
+
+        if accepted_identity != identity_value:
+            identity_confidence = self.current.identity_confidence
+
+        if accepted_expression != expression_value:
+            expression_confidence = self.current.expression_confidence
+
         updates = {
             "person_at_desk": self._debounced(
                 "person_at_desk",
@@ -587,30 +636,25 @@ class CurrentStateManager(QObject):
                 face_count,
                 2,
             ),
-            "identity": self._debounced(
-                "identity",
-                str(
-                    result.get(
-                        "identity",
-                        "Unknown",
-                    )
-                ),
-                2,
-            ),
-            "expression": self._debounced(
-                "expression",
-                str(
-                    result.get(
-                        "expression",
-                        "Unknown",
-                    )
-                ),
-                3,
+            "identity": accepted_identity,
+            "expression": accepted_expression,
+            "identity_confidence": identity_confidence,
+            "expression_confidence": expression_confidence,
+            "detection_confidence": float(
+                result.get("detection_confidence", 0.0)
             ),
         }
 
         self._commit(
             "vision_changed",
+            snapshot_fields=(
+                "person_at_desk",
+                "owner_at_desk",
+                "unknown_person_present",
+                "face_count",
+                "identity",
+                "expression",
+            ),
             **updates,
         )
 
@@ -631,6 +675,9 @@ class CurrentStateManager(QObject):
             face_count=0,
             identity="Unknown",
             expression="Unknown",
+            identity_confidence=None,
+            expression_confidence=0.0,
+            detection_confidence=0.0,
         )
 
     @pyqtSlot(str)

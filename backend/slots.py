@@ -14,6 +14,7 @@ from backend.services.face_recognition_service import FaceRecognitionService
 from backend.services.activity_monitor_service import ActivityMonitorService
 from backend.services.google_calendar_service import GoogleCalendarService
 from backend.services.llm_service import LLMService
+from backend.services.session_metrics_service import SessionMetricsService
 
 from backend.state_manager import CurrentStateManager
 from backend.database import Database
@@ -28,6 +29,7 @@ class SlotController(QObject):
         webcam: WebcamService,
         face_recognition: FaceRecognitionService,
         activity_monitor: ActivityMonitorService,
+        session_metrics: SessionMetricsService,
         calendar: GoogleCalendarService,
         llm: LLMService,
         clock: DemoClock,
@@ -41,6 +43,7 @@ class SlotController(QObject):
         self.webcam = webcam
         self.face_recognition = face_recognition
         self.activity_monitor = activity_monitor
+        self.session_metrics = session_metrics
         self.calendar=calendar
         self.llm = llm
         self.clock = clock
@@ -50,6 +53,7 @@ class SlotController(QObject):
         self.session_id = session_id
         self.window : DeskCompanionWindow | None = None
         self._context_message_floor_id : int | None = None
+        self._shutting_down = False
 
 
     def connect_window_to_slots(self, window:DeskCompanionWindow):
@@ -90,6 +94,8 @@ class SlotController(QObject):
         # State Related
         self.state_manager.state_changed.connect(window.show_current_state)
         self.state_manager.snapshot_created.connect(self._persist_state_snapshot)
+        self.state_manager.state_changed.connect(self.session_metrics.observe_state)
+        self.session_metrics.period_completed.connect(self._persist_session_period)
 
         # Calendar Related
         self.calendar.calendar_updated.connect(window.show_calendar)
@@ -181,6 +187,7 @@ class SlotController(QObject):
         if profile["switched"]:
             # Record and close the previous user's session.
             self.state_manager.capture_snapshot("session_ended")
+            self.session_metrics.finish_session()
 
             self.database.finish_app_session(self.session_id)
 
@@ -191,6 +198,7 @@ class SlotController(QObject):
 
             # The new session has no chat-history cutoff.
             self._context_message_floor_id = None
+            self.session_metrics.reset_session(self.session_id)
             self.state_manager.switch_profile(session_id=self.session_id, 
                                               user_name=str(profile["display_name"]),
                                               goal=str(profile["goal"]),
@@ -254,6 +262,14 @@ class SlotController(QObject):
                 "[DATABASE ERROR] State snapshot "
                 f"was not saved: {error}"
             )
+
+    @pyqtSlot(dict)
+    def _persist_session_period(self, period: dict) -> None:
+        try:
+            period_id = self.database.save_session_period(period)
+            print(f"[METRICS] Period {period_id} saved: {period['period_type']} for {period['duration_s']:.1f} simulated seconds.")
+        except Exception as error:
+            print(f"[DATABASE ERROR] Session period was not saved: {error}")
 
 
     # Calendar Slots
@@ -418,18 +434,27 @@ class SlotController(QObject):
 
     @pyqtSlot()
     def shutdown(self) -> None:
-        self.webcam.stop()
-        self.face_recognition.stop()
-        self.activity_monitor.stop()
+        if self._shutting_down:
+            return
 
-        self.state_manager.capture_snapshot("session_ended")
+        self._shutting_down = True
+
+        # Stop state timers before stopping their input services.
         self.state_manager.stop()
 
+        # Stop frame and input producers first.
+        self.webcam.stop()
+        self.activity_monitor.stop()
+
+        # Wait for network and processing workers.
         self.calendar.stop()
+        self.face_recognition.stop()
         self.llm.stop()
-        
+
+        # Persist final state only after all workers have stopped.
+        self.state_manager.capture_snapshot("session_ended")
+        self.session_metrics.finish_session()
         self.database.finish_app_session(self.session_id)
         self.database.close()
-
 
     
