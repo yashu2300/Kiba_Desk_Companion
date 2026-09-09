@@ -219,6 +219,23 @@ class SessionMetricsService(QObject):
         if owner_at_desk is True and self._continuous_desk_started_s is not None:
             continuous_desk_s = max(0.0, elapsed_s - self._continuous_desk_started_s)
 
+        current_inactivity_period = None
+        if self._inactive_started is not None:
+            current_inactivity_period = {
+                "started_elapsed_s": round(float(self._inactive_started["started_elapsed_s"]), 3),
+                "started_at_simulated_utc": self._inactive_started["started_at_simulated_utc"],
+                "duration_s": round(current_qualified_inactive_s, 3),
+            }
+
+        current_negative_emotion = None
+        if self._negative_emotion_started is not None:
+            current_negative_emotion = {
+                "started_elapsed_s": round(float(self._negative_emotion_started["started_elapsed_s"]), 3),
+                "started_at_simulated_utc": self._negative_emotion_started["started_at_simulated_utc"],
+                "duration_s": round(negative_emotion_s, 3),
+                "expression": str(self._latest_state.get("expression", "Unknown")),
+                "confidence": float(self._latest_state.get("expression_confidence", 0.0)),
+            }
         return {
             "session_id": self.session_id,
             "current_away_s": round(current_away_s, 3),
@@ -239,6 +256,13 @@ class SessionMetricsService(QObject):
             "negative_emotion_active": self._negative_emotion_started is not None,
             "negative_emotion_duration_s": round(negative_emotion_s, 3),
             "recent_negative_emotion_periods": list(self._negative_emotion_periods),
+            "continuous_owner_at_desk_started_elapsed_s": (
+                round(self._continuous_desk_started_s, 3)
+                if self._continuous_desk_started_s is not None
+                else None
+            ),
+            "current_inactivity_period": current_inactivity_period,
+            "current_negative_emotion": current_negative_emotion,
         }
 
     @pyqtSlot()

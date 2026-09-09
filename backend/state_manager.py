@@ -869,3 +869,8 @@ class CurrentStateManager(QObject):
                 )
             ),
         }
+    def current_state_payload(self) -> dict[str, Any]:
+        """Return current state without historical snapshots."""
+
+        self.current = self._refresh_durations(self.current)
+        return self.current.to_dict()

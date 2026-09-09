@@ -701,20 +701,37 @@ class DeskCompanionWindow(QMainWindow):
         self.send_button.setEnabled(not busy)
         self.send_button.setText("◌  Thinking…" if busy else "➤  Send")
 
-
     @pyqtSlot(dict)
     def show_llm_response(self, result: dict) -> None:
-        self.add_conversation_message("assistant", str(result.get("text_response", "")), "LLM",)
+        persona = str(result.get("persona", "llm"))
+        source_label = (
+            "CONTEXT"
+            if persona == "contextual"
+            else "KIBA"
+        )
+
+        self.add_conversation_message(
+            "assistant",
+            str(result.get("text_response", "")),
+            source_label,
+        )
 
         actions = list(result.get("actions", []))
-
-        visible_actions = [action for action in actions if action != "no_action"]
+        visible_actions = [
+            action
+            for action in actions
+            if action != "no_action"
+        ]
 
         if visible_actions:
-            self.action_label.setText(" → ".join(visible_actions))
+            self.action_label.setText(
+                " → ".join(visible_actions)
+            )
         else:
-            self.action_label.setText("No movement requested")
-
+            self.action_label.setText(
+                "No movement requested"
+            )
+    
     @pyqtSlot(str)
     def show_llm_error(
         self,

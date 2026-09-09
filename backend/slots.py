@@ -13,7 +13,9 @@ from backend.services.webcam_service import WebcamService
 from backend.services.face_recognition_service import FaceRecognitionService
 from backend.services.activity_monitor_service import ActivityMonitorService
 from backend.services.google_calendar_service import GoogleCalendarService
-from backend.services.llm_service import LLMService
+from backend.services.llm_context_builders import build_contextual_payload, build_conversation_payload
+from backend.services.llm_service import ContextualLLMService, ConversationLLMService
+from backend.services.event_evaluator_service import EventEvaluatorService
 from backend.services.session_metrics_service import SessionMetricsService
 
 from backend.state_manager import CurrentStateManager
@@ -31,7 +33,9 @@ class SlotController(QObject):
         activity_monitor: ActivityMonitorService,
         session_metrics: SessionMetricsService,
         calendar: GoogleCalendarService,
-        llm: LLMService,
+        conversation_llm: ConversationLLMService,
+        contextual_llm: ContextualLLMService,
+        event_evaluator: EventEvaluatorService,
         clock: DemoClock,
         state_manager: CurrentStateManager,
         database: Database,
@@ -45,7 +49,6 @@ class SlotController(QObject):
         self.activity_monitor = activity_monitor
         self.session_metrics = session_metrics
         self.calendar=calendar
-        self.llm = llm
         self.clock = clock
         self.state_manager = state_manager
         self.database = database
@@ -54,6 +57,15 @@ class SlotController(QObject):
         self.window : DeskCompanionWindow | None = None
         self._context_message_floor_id : int | None = None
         self._shutting_down = False
+
+        self.conversation_llm = conversation_llm
+        self.contextual_llm = contextual_llm
+        self.event_evaluator = event_evaluator
+
+        self._shutting_down = False
+        self._handling_user_message = False
+        self._conversation_llm_busy = False
+        self._contextual_llm_busy = False
 
 
     def connect_window_to_slots(self, window:DeskCompanionWindow):
@@ -104,11 +116,22 @@ class SlotController(QObject):
         self.calendar.error.connect(self._on_calendar_error)
 
         # LLM Related
-        self.llm.response_ready.connect(window.show_llm_response)
-        self.llm.response_ready.connect(self._on_llm_response)
-        self.llm.busy_changed.connect(window.set_llm_busy)
-        self.llm.error.connect(window.show_llm_error)
-        self.llm.error.connect(self._on_llm_error)
+        # Conversation LLM
+        self.conversation_llm.response_ready.connect(window.show_llm_response)
+        self.conversation_llm.response_ready.connect(self._on_llm_response)
+        self.conversation_llm.busy_changed.connect(self._on_conversation_llm_busy)
+        self.conversation_llm.error.connect(window.show_llm_error)
+        self.conversation_llm.error.connect(self._on_llm_error)
+
+        # Contextual LLM
+        self.contextual_llm.response_ready.connect(window.show_llm_response)
+        self.contextual_llm.response_ready.connect(self._on_llm_response)
+        self.contextual_llm.busy_changed.connect(self._on_contextual_llm_busy)
+        self.contextual_llm.error.connect(window.show_llm_error)
+        self.contextual_llm.error.connect(self._on_llm_error)
+
+        self.session_metrics.metrics_changed.connect(self._evaluate_context_triggers)
+        self.event_evaluator.trigger_ready.connect(self.request_contextual_response)
 
 
         # Interconnected Serivce Signals
@@ -199,6 +222,7 @@ class SlotController(QObject):
             # The new session has no chat-history cutoff.
             self._context_message_floor_id = None
             self.session_metrics.reset_session(self.session_id)
+            self.event_evaluator.reset_session()
             self.state_manager.switch_profile(session_id=self.session_id, 
                                               user_name=str(profile["display_name"]),
                                               goal=str(profile["goal"]),
@@ -287,140 +311,168 @@ class SlotController(QObject):
         self._context_message_floor_id = (self.database.latest_message_id(self.session_id))
         print("[LLM CONTEXT] Conversation history reset; database messages retained.")
 
+    @pyqtSlot(dict)
+    def _evaluate_context_triggers(
+        self,
+        metrics: dict,
+    ) -> None:
+        if self._shutting_down or self._handling_user_message:
+            return
+
+        state = self.state_manager.current_state_payload()
+        self.event_evaluator.evaluate(state, metrics)
+
+
+    @pyqtSlot(bool)
+    def _on_conversation_llm_busy(
+        self,
+        busy: bool,
+    ) -> None:
+        self._conversation_llm_busy = busy
+        self._publish_combined_llm_busy()
+
+
+    @pyqtSlot(bool)
+    def _on_contextual_llm_busy(
+        self,
+        busy: bool,
+    ) -> None:
+        self._contextual_llm_busy = busy
+        self._publish_combined_llm_busy()
+
+
+    def _publish_combined_llm_busy(self) -> None:
+        busy = (
+            self._conversation_llm_busy
+            or self._contextual_llm_busy
+        )
+
+        self.event_evaluator.set_busy(busy)
+
+        if self.window is not None:
+            self.window.set_llm_busy(busy)
+
+
     @pyqtSlot(str, str)
     def on_message_send_requested(
         self,
         message: str,
         source: str,
     ) -> None:
-        turn_id = str(uuid4())
+        if (
+            self._conversation_llm_busy
+            or self._contextual_llm_busy
+        ):
+            return
 
-        context = (
-            self.state_manager.context_payload(
-                history_limit=8
-            )
-        )
+        self._handling_user_message = True
 
-        context["recent_messages"] = (
-            self.database.recent_messages(
+        try:
+            # Direct contact counts as current computer activity.
+            self.state_manager.record_user_activity(source)
+
+            turn_id = str(uuid4())
+            state = self.state_manager.current_state_payload()
+            metrics = self.session_metrics.summary()
+
+            history = self.database.conversation_messages(
                 self.session_id,
-                limit=8,
-                after_message_id=(
-                    self._context_message_floor_id
-                ),
+                limit=10,
+                after_message_id=self._context_message_floor_id,
             )
-        )
 
-        self.database.save_message(
-            session_id=self.session_id,
-            role="user",
-            content=message,
-            source=source,
-            turn_id=turn_id,
-            context_data=context,
-        )
+            payload = build_conversation_payload(
+                message,
+                source,
+                state,
+                metrics,
+                history,
+            )
 
-        self.llm.generate(
-            turn_id=turn_id,
-            user_message=message,
-            source=source,
-            trigger="user_message",
-            context=context,
-        )
+            self.database.save_message(
+                session_id=self.session_id,
+                role="user",
+                content=message,
+                source=source,
+                turn_id=turn_id,
+                context_data=payload,
+            )
+
+            self.conversation_llm.generate(
+                turn_id,
+                payload,
+                source,
+            )
+
+        finally:
+            self._handling_user_message = False
+            self._publish_combined_llm_busy()
 
 
+    @pyqtSlot(str, dict)
     def request_contextual_response(
         self,
-        trigger: str,
+        trigger_name: str,
+        trigger_details: dict,
     ) -> None:
-        """
-        Entry point for a future automatic
-        contextual-event evaluator.
-        """
+        if (
+            self._conversation_llm_busy
+            or self._contextual_llm_busy
+            or self._shutting_down
+        ):
+            return
 
         turn_id = str(uuid4())
+        state = self.state_manager.current_state_payload()
+        metrics = self.session_metrics.summary()
 
-        context = (
-            self.state_manager.context_payload(
-                history_limit=8
-            )
-        )
-
-        context["recent_messages"] = (
-            self.database.recent_messages(
-                self.session_id,
-                limit=8,
-                after_message_id=(
-                    self._context_message_floor_id
-                ),
-            )
+        payload = build_contextual_payload(
+            trigger_name,
+            state,
+            metrics,
+            trigger_details,
         )
 
         self.database.save_message(
             session_id=self.session_id,
             role="event",
-            content=trigger,
+            content=trigger_name,
             source="contextual_event",
             turn_id=turn_id,
-            context_data=context,
+            context_data=payload,
         )
 
-        self.llm.generate(
-            turn_id=turn_id,
-            user_message=None,
-            source="contextual_event",
-            trigger=trigger,
-            context=context,
+        self.contextual_llm.generate(
+            turn_id,
+            payload,
         )
-
 
     @pyqtSlot(dict)
-    def _on_llm_response(
-        self,
-        result: dict,
-    ) -> None:
-        actions = list(
-            result.get("actions", [])
-        )
+    def _on_llm_response(self, result: dict) -> None:
+        actions = list(result.get("actions", []))
+        persona = str(result.get("persona", "unknown"))
 
         self.database.save_message(
             session_id=self.session_id,
             role="assistant",
-            content=str(
-                result.get(
-                    "text_response",
-                    "",
-                )
-            ),
-            source="llm",
-            turn_id=str(
-                result.get("turn_id", "")
-            ),
+            content=str(result.get("text_response", "")),
+            source=f"{persona}_llm",
+            turn_id=str(result.get("turn_id", "")),
             action_data={
                 "actions": actions,
                 "model": result.get("model"),
+                "persona": persona,
             },
         )
-        print(
-            f"[LLM MODEL] "
-            f"{result.get('model', 'Unknown')}"
-        )
 
-        print(
-            f"[LLM TEXT] "
-            f"{result.get('text_response', '')}"
-        )
-
-        print(
-            f"[LLM ACTIONS] {actions}"
-        )
+        print(f"[LLM PERSONA] {persona}")
+        print(f"[LLM MODEL] {result.get('model', 'Unknown')}")
+        print(f"[LLM TEXT] {result.get('text_response', '')}")
+        print(f"[LLM ACTIONS] {actions}")
 
         for action in actions:
             if action != "no_action":
-                print(
-                    f"[ACTION SIMULATED] "
-                    f"{action}"
-                )
+                print(f"[ACTION SIMULATED] {action}")
 
 
     @pyqtSlot(str)
@@ -439,22 +491,15 @@ class SlotController(QObject):
 
         self._shutting_down = True
 
-        # Stop state timers before stopping their input services.
         self.state_manager.stop()
-
-        # Stop frame and input producers first.
         self.webcam.stop()
         self.activity_monitor.stop()
-
-        # Wait for network and processing workers.
         self.calendar.stop()
         self.face_recognition.stop()
-        self.llm.stop()
+        self.conversation_llm.stop()
+        self.contextual_llm.stop()
 
-        # Persist final state only after all workers have stopped.
         self.state_manager.capture_snapshot("session_ended")
         self.session_metrics.finish_session()
         self.database.finish_app_session(self.session_id)
         self.database.close()
-
-    

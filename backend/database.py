@@ -17,6 +17,7 @@ from sqlalchemy import (
     String,
     Text,
     create_engine,
+    or_,
     select,
     update,
 )
@@ -817,6 +818,48 @@ class Database:
                 for row in reversed(rows)
             ]
 
+    def conversation_messages(
+        self,
+        session_id: int,
+        limit: int = 10,
+        after_message_id: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return only direct user/conversation-persona messages."""
+
+        with self._sessions() as session:
+            conditions = [
+                MessageEntity.session_id == session_id,
+                or_(
+                    MessageEntity.role == "user",
+                    (
+                        (MessageEntity.role == "assistant")
+                        & (MessageEntity.source == "conversation_llm")
+                    ),
+                ),
+            ]
+
+            if after_message_id is not None:
+                conditions.append(MessageEntity.id > after_message_id)
+
+            rows = session.scalars(
+                select(MessageEntity)
+                .where(*conditions)
+                .order_by(MessageEntity.created_at.desc(), MessageEntity.id.desc())
+                .limit(limit)
+            ).all()
+
+            return [
+                {
+                    "id": row.id,
+                    "turn_id": row.turn_id,
+                    "role": row.role,
+                    "source": row.source,
+                    "content": row.content,
+                    "created_at": row.created_at.isoformat(),
+                }
+                for row in reversed(rows)
+            ]
+    
     def save_session_period(self, period: dict[str, Any]) -> int:
         """Store one completed simulated-time period."""
 
