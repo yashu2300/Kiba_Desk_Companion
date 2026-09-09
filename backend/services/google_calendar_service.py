@@ -71,6 +71,7 @@ class _CalendarFetchThread(QThread):
         self.timezone_name = timezone_name
         self.day_start_utc = day_start_utc
         self.day_end_utc = day_end_utc
+        self._connection_retry_count = 0
 
     def _load_credentials(self):
         from google.auth.transport.requests import Request
@@ -127,31 +128,57 @@ class _CalendarFetchThread(QThread):
         return credentials
 
     def run(self) -> None:
+        stage = "starting calendar request"
+
         try:
             from googleapiclient.discovery import build
+            import httplib2
+            from google_auth_httplib2 import (
+                AuthorizedHttp,
+            )
 
+            stage = "loading or refreshing OAuth credentials"
             credentials = self._load_credentials()
+
+            stage = "building Google Calendar client"
+
+            authorized_http = AuthorizedHttp(
+                credentials,
+                http=httplib2.Http(
+                    timeout=20
+                ),
+            )
 
             api = build(
                 "calendar",
                 "v3",
-                credentials=credentials,
+                http=authorized_http,
                 cache_discovery=False,
+                static_discovery=True,
             )
+
+            stage = "fetching calendar events"
 
             response = (
                 api.events()
                 .list(
                     calendarId=self.calendar_id,
-                    timeMin=self.day_start_utc.isoformat(),
-                    timeMax=self.day_end_utc.isoformat(),
+                    timeMin=(
+                        self.day_start_utc.isoformat()
+                    ),
+                    timeMax=(
+                        self.day_end_utc.isoformat()
+                    ),
                     singleEvents=True,
                     orderBy="startTime",
                     maxResults=2500,
                     timeZone=self.timezone_name,
                 )
-                .execute()
+                .execute(num_retries=2)
             )
+
+            # Keep the remainder of your existing
+            # event-processing code here.
 
             local_zone = ZoneInfo(
                 self.timezone_name
@@ -249,7 +276,10 @@ class _CalendarFetchThread(QThread):
             )
 
         except Exception as error:
-            self.fetch_failed.emit(str(error))
+            self.fetch_failed.emit(
+                f"{stage} failed: "
+                f"{type(error).__name__}: {error}"
+            )
         
 
 
@@ -395,6 +425,7 @@ class GoogleCalendarService(QObject):
         self,
         result: object,
     ) -> None:
+        self._connection_retry_count = 0
         payload = dict(result)
 
         self._events = list(
@@ -420,6 +451,17 @@ class GoogleCalendarService(QObject):
         self._connected = False
         self.error.emit(message)
         self._publish()
+        if self._connection_retry_count < 1:
+            self._connection_retry_count += 1
+            print(
+                "[CALENDAR RETRY] "
+                "Retrying in 5 seconds."
+            )
+
+            QTimer.singleShot(
+                5000,
+                self.refresh,
+            )           
 
     @pyqtSlot()
     def _on_worker_finished(self) -> None:
