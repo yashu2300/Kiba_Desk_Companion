@@ -17,6 +17,7 @@ from backend.services.google_calendar_service import GoogleCalendarService
 from backend.services.event_evaluator_service import EventEvaluatorService
 from backend.services.llm_service import ContextualLLMService, ConversationLLMService
 from backend.services.session_metrics_service import SessionMetricsService
+from backend.services.TTS_service import TextToSpeechService
 
 from backend.slots import SlotController
 from backend.state_manager import CurrentStateManager
@@ -72,6 +73,7 @@ def main() -> int:
     calendar = GoogleCalendarService(clock=clock, timezone_name="Pacific/Auckland")
     conversation_llm = ConversationLLMService()
     contextual_llm = ContextualLLMService()
+    tts = TextToSpeechService()
 
     event_evaluator = EventEvaluatorService(
         inactivity_trigger_s=300.0,
@@ -91,6 +93,7 @@ def main() -> int:
         calendar=calendar,
         conversation_llm=conversation_llm,
         contextual_llm=contextual_llm,
+        tts=tts,
         event_evaluator=event_evaluator,
         clock=clock,
         state_manager=state_manager,
@@ -105,6 +108,7 @@ def main() -> int:
     state_manager.start()
     activity_monitor.start()
     calendar.start()
+    tts.start()
 
 
     window.showMaximized()

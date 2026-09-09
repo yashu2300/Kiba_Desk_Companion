@@ -17,6 +17,7 @@ from backend.services.llm_context_builders import build_contextual_payload, buil
 from backend.services.llm_service import ContextualLLMService, ConversationLLMService
 from backend.services.event_evaluator_service import EventEvaluatorService
 from backend.services.session_metrics_service import SessionMetricsService
+from backend.services.TTS_service import TextToSpeechService
 
 from backend.state_manager import CurrentStateManager
 from backend.database import Database
@@ -35,6 +36,7 @@ class SlotController(QObject):
         calendar: GoogleCalendarService,
         conversation_llm: ConversationLLMService,
         contextual_llm: ContextualLLMService,
+        tts: TextToSpeechService,
         event_evaluator: EventEvaluatorService,
         clock: DemoClock,
         state_manager: CurrentStateManager,
@@ -61,12 +63,12 @@ class SlotController(QObject):
         self.conversation_llm = conversation_llm
         self.contextual_llm = contextual_llm
         self.event_evaluator = event_evaluator
-
         self._shutting_down = False
         self._handling_user_message = False
         self._conversation_llm_busy = False
         self._contextual_llm_busy = False
 
+        self.tts = tts
 
     def connect_window_to_slots(self, window:DeskCompanionWindow):
         """ Wire every frontend/pyqtSignals and service result signals in ONE PLACE"""
@@ -133,6 +135,11 @@ class SlotController(QObject):
         self.session_metrics.metrics_changed.connect(self._evaluate_context_triggers)
         self.event_evaluator.trigger_ready.connect(self.request_contextual_response)
 
+        # Text to speech
+        self.tts.ready_changed.connect(self._on_tts_ready_changed)
+        self.tts.audio_ready.connect(self._on_tts_audio_ready)
+        self.tts.playback_finished.connect(self._on_tts_playback_finished)
+        self.tts.error.connect(self._on_tts_error)
 
         # Interconnected Serivce Signals
         self.webcam.analysis_frame_ready.connect(self.face_recognition.submit_frame)
@@ -470,10 +477,29 @@ class SlotController(QObject):
         print(f"[LLM TEXT] {result.get('text_response', '')}")
         print(f"[LLM ACTIONS] {actions}")
 
+        
         for action in actions:
             if action != "no_action":
                 print(f"[ACTION SIMULATED] {action}")
 
+        text_response = str(result.get("text_response", "")).strip()
+        if text_response:
+            self.tts.speak(
+                text=text_response,
+                turn_id=str(
+                    result.get(
+                        "turn_id",
+                        "",
+                    )
+                ),
+                persona=str(
+                    result.get(
+                        "persona",
+                        "unknown",
+                    )
+                ),
+            )
+                
 
     @pyqtSlot(str)
     def _on_llm_error(
@@ -483,6 +509,54 @@ class SlotController(QObject):
         print(
             f"[LLM ERROR] {message}"
         )
+
+
+    # TTS SLOTS
+    @pyqtSlot(bool)
+    def _on_tts_ready_changed(
+        self,
+        ready: bool,
+    ) -> None:
+        if ready:
+            print(
+                f"[TTS] Kokoro ready: "
+                f"voice={self.tts.voice}, "
+                f"language={self.tts.language}, "
+                f"speed={self.tts.speed:g}."
+            )
+
+
+    @pyqtSlot(dict)
+    def _on_tts_audio_ready(
+        self,
+        result: dict,
+    ) -> None:
+        print(
+            "[TTS] Latest WAV ready: "
+            f"revision={result['revision']}, "
+            f"size={result['size_bytes']} bytes."
+        )
+
+
+    @pyqtSlot(dict)
+    def _on_tts_playback_finished(
+        self,
+        result: dict,
+    ) -> None:
+        if result.get("played_locally"):
+            print(
+                "[TTS] Playback finished: "
+                f"turn_id={result['turn_id']}"
+            )
+
+
+    @pyqtSlot(str)
+    def _on_tts_error(
+        self,
+        message: str,
+    ) -> None:
+        print(f"[TTS ERROR] {message}")
+
 
     @pyqtSlot()
     def shutdown(self) -> None:
@@ -498,6 +572,7 @@ class SlotController(QObject):
         self.face_recognition.stop()
         self.conversation_llm.stop()
         self.contextual_llm.stop()
+        self.tts.stop()
 
         self.state_manager.capture_snapshot("session_ended")
         self.session_metrics.finish_session()
