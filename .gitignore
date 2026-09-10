@@ -220,3 +220,5 @@ __marimo__/
 data/vision/owner_embedding.npy
 /credentials
 data/google_calendar_token.json
+models/kokoro-v1.0.onnx
+models/voices-v1.0.bin

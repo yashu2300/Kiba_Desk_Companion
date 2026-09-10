@@ -19,7 +19,6 @@ class DeskCompanionWindow(QMainWindow):
     goal_editor_opened = pyqtSignal()
     goal_saved = pyqtSignal(str, str, bool)
     calendar_refresh_requested = pyqtSignal()
-    microphone_toggled = pyqtSignal(bool)
     message_send_requested = pyqtSignal(str, str) # Text Input sent
     reset_conversation_requested = pyqtSignal()
     user_activity_detected = pyqtSignal(str)
@@ -46,7 +45,6 @@ class DeskCompanionWindow(QMainWindow):
 
         self.camera_active = False
         self.camera_starting = False
-        self.recording = False
         
         self._build_ui()
         self._connect_signals()
@@ -346,11 +344,13 @@ class DeskCompanionWindow(QMainWindow):
 
         actions = QHBoxLayout()
         actions.setSpacing(9)
-        self.microphone_button = QPushButton("Record voice")
         self.send_button = QPushButton("➤  Send")
         self.send_button.setObjectName("primaryButton")
-        helper = make_label("Enter to send · Shift + Enter for a new line", "helper")
-        actions.addWidget(self.microphone_button)
+        self.speech_status_label = make_label("Starting voice recognition…", "helper")
+        helper = make_label("Enter to send · Shift + Enter for a new line","helper")
+
+        actions.addWidget(self.speech_status_label)
+        actions.addSpacing(12)
         actions.addWidget(helper)
         actions.addStretch(1)
         actions.addWidget(self.send_button)
@@ -787,6 +787,23 @@ class DeskCompanionWindow(QMainWindow):
         self.reset_conversation_requested.emit()
 
 
+    @pyqtSlot(str)
+    def show_speech_status(
+        self,
+        message: str,
+    ) -> None:
+        self.speech_status_label.setText(
+            message
+        )
 
+
+    @pyqtSlot(str)
+    def show_speech_error(
+        self,
+        message: str,
+    ) -> None:
+        self._show_notice(
+            f"Voice input error: {message}"
+        )
 
     

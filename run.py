@@ -4,7 +4,7 @@ Entry Point for the Application
 import sys
 from pathlib import Path
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtWidgets import QApplication
 
 from frontend.main_window import DeskCompanionWindow
@@ -18,6 +18,7 @@ from backend.services.event_evaluator_service import EventEvaluatorService
 from backend.services.llm_service import ContextualLLMService, ConversationLLMService
 from backend.services.session_metrics_service import SessionMetricsService
 from backend.services.TTS_service import TextToSpeechService
+from backend.services.STT_service import SpeechToTextService
 
 from backend.slots import SlotController
 from backend.state_manager import CurrentStateManager
@@ -74,6 +75,7 @@ def main() -> int:
     conversation_llm = ConversationLLMService()
     contextual_llm = ContextualLLMService()
     tts = TextToSpeechService()
+    stt = SpeechToTextService()
 
     event_evaluator = EventEvaluatorService(
         inactivity_trigger_s=300.0,
@@ -94,6 +96,7 @@ def main() -> int:
         conversation_llm=conversation_llm,
         contextual_llm=contextual_llm,
         tts=tts,
+        stt=stt,
         event_evaluator=event_evaluator,
         clock=clock,
         state_manager=state_manager,
@@ -111,8 +114,14 @@ def main() -> int:
     tts.start()
 
 
+
     window.showMaximized()
     window.show()
+    QTimer.singleShot(
+        1500,
+        stt.start,
+    )
+
     return app.exec_()
 
 

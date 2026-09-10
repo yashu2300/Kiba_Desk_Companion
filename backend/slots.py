@@ -18,6 +18,7 @@ from backend.services.llm_service import ContextualLLMService, ConversationLLMSe
 from backend.services.event_evaluator_service import EventEvaluatorService
 from backend.services.session_metrics_service import SessionMetricsService
 from backend.services.TTS_service import TextToSpeechService
+from backend.services.STT_service import SpeechToTextService
 
 from backend.state_manager import CurrentStateManager
 from backend.database import Database
@@ -37,6 +38,7 @@ class SlotController(QObject):
         conversation_llm: ConversationLLMService,
         contextual_llm: ContextualLLMService,
         tts: TextToSpeechService,
+        stt: SpeechToTextService,
         event_evaluator: EventEvaluatorService,
         clock: DemoClock,
         state_manager: CurrentStateManager,
@@ -69,6 +71,9 @@ class SlotController(QObject):
         self._contextual_llm_busy = False
 
         self.tts = tts
+        self.stt = stt
+        self._tts_busy = False
+        self._speech_input_busy = False
 
     def connect_window_to_slots(self, window:DeskCompanionWindow):
         """ Wire every frontend/pyqtSignals and service result signals in ONE PLACE"""
@@ -137,9 +142,18 @@ class SlotController(QObject):
 
         # Text to speech
         self.tts.ready_changed.connect(self._on_tts_ready_changed)
+        self.tts.busy_changed.connect(self._on_tts_busy_changed)
         self.tts.audio_ready.connect(self._on_tts_audio_ready)
         self.tts.playback_finished.connect(self._on_tts_playback_finished)
         self.tts.error.connect(self._on_tts_error)
+
+        self.stt.ready_changed.connect(self._on_stt_ready_changed)
+        self.stt.status_changed.connect(window.show_speech_status)
+        self.stt.capture_busy_changed.connect(self._on_stt_capture_busy_changed)
+        self.stt.wake_word_detected.connect(self._on_wake_word_detected)
+        self.stt.transcript_ready.connect(self.on_speech_transcript_ready)
+        self.stt.error.connect(window.show_speech_error)
+        self.stt.error.connect(self._on_stt_error)
 
         # Interconnected Serivce Signals
         self.webcam.analysis_frame_ready.connect(self.face_recognition.submit_frame)
@@ -348,16 +362,28 @@ class SlotController(QObject):
         self._publish_combined_llm_busy()
 
 
-    def _publish_combined_llm_busy(self) -> None:
-        busy = (
+    def _publish_combined_llm_busy(
+        self,
+    ) -> None:
+        llm_busy = (
             self._conversation_llm_busy
             or self._contextual_llm_busy
         )
 
-        self.event_evaluator.set_busy(busy)
+        self.event_evaluator.set_busy(
+            llm_busy
+            or self._speech_input_busy
+        )
+
+        self.stt.set_interaction_busy(
+            llm_busy
+            or self._tts_busy
+        )
 
         if self.window is not None:
-            self.window.set_llm_busy(busy)
+            self.window.set_llm_busy(
+                llm_busy
+            )
 
 
     @pyqtSlot(str, str)
@@ -557,6 +583,78 @@ class SlotController(QObject):
     ) -> None:
         print(f"[TTS ERROR] {message}")
 
+    # STT SLOTS
+    @pyqtSlot(str)
+    def on_speech_transcript_ready(
+        self,
+        message: str,
+    ) -> None:
+        clean_message = message.strip()
+
+        if (
+            not clean_message
+            or self.window is None
+        ):
+            return
+
+        self.window.add_conversation_message(
+            "user",
+            clean_message,
+            "VOICE",
+        )
+
+        self.on_message_send_requested(
+            clean_message,
+            "speech",
+        )
+
+
+    @pyqtSlot(bool)
+    def _on_stt_ready_changed(
+        self,
+        ready: bool,
+    ) -> None:
+        if ready:
+            print(
+                "[STT] Sherpa wake word and "
+                "Faster-Whisper tiny.en are ready."
+            )
+
+
+    @pyqtSlot(bool)
+    def _on_stt_capture_busy_changed(
+        self,
+        busy: bool,
+    ) -> None:
+        self._speech_input_busy = busy
+        self._publish_combined_llm_busy()
+
+
+    @pyqtSlot(str)
+    def _on_wake_word_detected(
+        self,
+        keyword: str,
+    ) -> None:
+        print(
+            f"[STT] Wake phrase detected: "
+            f"{keyword}"
+        )
+
+
+    @pyqtSlot(str)
+    def _on_stt_error(
+        self,
+        message: str,
+    ) -> None:
+        print(f"[STT ERROR] {message}")
+
+    @pyqtSlot(bool)
+    def _on_tts_busy_changed(
+        self,
+        busy: bool,
+    ) -> None:
+        self._tts_busy = busy
+        self._publish_combined_llm_busy()
 
     @pyqtSlot()
     def shutdown(self) -> None:
@@ -564,7 +662,7 @@ class SlotController(QObject):
             return
 
         self._shutting_down = True
-
+        self.stt.stop()
         self.state_manager.stop()
         self.webcam.stop()
         self.activity_monitor.stop()
