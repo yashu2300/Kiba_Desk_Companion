@@ -37,7 +37,7 @@ output_path = (
     ROOT
     / "assets"
     / "audio"
-    / "guard_warning.wav"
+    / "welcome_user.wav"
 )
 
 output_path.parent.mkdir(
@@ -52,8 +52,7 @@ kokoro = Kokoro(
 
 samples, sample_rate = kokoro.create(
     (
-        "Warning. You are not the authorised user. "
-        "Please step back from the desk."
+        "Welcome back! I hope your break was fruitful."
     ),
     voice=os.getenv(
         "KOKORO_VOICE",

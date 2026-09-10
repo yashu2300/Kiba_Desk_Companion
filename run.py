@@ -20,6 +20,7 @@ from backend.services.session_metrics_service import SessionMetricsService
 from backend.services.TTS_service import TextToSpeechService
 from backend.services.STT_service import SpeechToTextService
 from backend.services.guard_mode_service import GuardModeService
+from backend.services.email_service import OwnerNotificationService
 
 from backend.slots import SlotController
 from backend.state_manager import CurrentStateManager
@@ -78,6 +79,7 @@ def main() -> int:
     tts = TextToSpeechService()
     stt = SpeechToTextService()
     guard_mode = GuardModeService()
+    owner_notification = OwnerNotificationService()
 
     event_evaluator = EventEvaluatorService(
         inactivity_trigger_s=300.0,
@@ -100,6 +102,7 @@ def main() -> int:
         tts=tts,
         stt=stt,
         guard_mode=guard_mode,
+        owner_notification=owner_notification,
         event_evaluator=event_evaluator,
         clock=clock,
         state_manager=state_manager,

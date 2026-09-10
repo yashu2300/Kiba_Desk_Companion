@@ -15,6 +15,7 @@ from backend.services.activity_monitor_service import ActivityMonitorService
 from backend.services.event_evaluator_service import EventEvaluatorService
 from backend.services.face_recognition_service import FaceRecognitionService
 from backend.services.google_calendar_service import GoogleCalendarService
+from backend.services.email_service import OwnerNotificationService
 from backend.services.guard_mode_service import GuardModeService
 from backend.services.llm_context_builders import (
     build_contextual_payload,
@@ -42,6 +43,7 @@ class SlotController(QObject):
         tts: TextToSpeechService,
         stt: SpeechToTextService,
         guard_mode: GuardModeService,
+        owner_notification: OwnerNotificationService,
         event_evaluator: EventEvaluatorService,
         clock: DemoClock,
         state_manager: CurrentStateManager,
@@ -62,6 +64,7 @@ class SlotController(QObject):
         self.tts = tts
         self.stt = stt
         self.guard_mode = guard_mode
+        self.owner_notification = owner_notification
         self.event_evaluator = event_evaluator
         self.clock = clock
         self.state_manager = state_manager
@@ -198,6 +201,23 @@ class SlotController(QObject):
         )
         self.face_recognition.result_ready.connect(
             self.guard_mode.observe_vision
+        )
+
+        # Email Owner
+        self.guard_mode.intruder_detected.connect(
+            self._on_guard_intruder_detected
+        )
+
+        self.owner_notification.notification_sent.connect(
+            self._on_guard_notification_sent
+        )
+
+        self.owner_notification.error.connect(
+            window.show_guard_error
+        )
+
+        self.owner_notification.error.connect(
+            self._on_guard_notification_error
         )
 
         # Inter-service signals.
@@ -997,6 +1017,52 @@ class SlotController(QObject):
     ) -> None:
         print(f"[GUARD ERROR] {message}")
 
+
+    @pyqtSlot(dict)
+    def _on_guard_intruder_detected(
+        self,
+        details: dict,
+    ) -> None:
+        if (
+            not self._guard_mode_active
+            or self._shutting_down
+        ):
+            return
+
+        payload = dict(details)
+
+        payload["owner_name"] = (
+            self.state_manager
+            .current
+            .user_name
+            or "Owner"
+        )
+
+        self.owner_notification.notify_intruder(
+            payload
+        )
+
+
+    @pyqtSlot(str)
+    def _on_guard_notification_sent(
+        self,
+        recipient: str,
+    ) -> None:
+        print(
+            "[GUARD EMAIL] "
+            f"Owner notification sent to "
+            f"{recipient}."
+        )
+
+
+    @pyqtSlot(str)
+    def _on_guard_notification_error(
+        self,
+        message: str,
+    ) -> None:
+        print(
+            f"[GUARD EMAIL ERROR] {message}"
+        )
     # ------------------------------------------------------------------
     # Shutdown
     # ------------------------------------------------------------------
@@ -1013,6 +1079,7 @@ class SlotController(QObject):
 
         # Stop live inputs and repeating guard events first.
         self.guard_mode.stop()
+        self.owner_notification.stop()
         self.stt.stop()
         self.activity_monitor.stop()
         self.calendar.stop()

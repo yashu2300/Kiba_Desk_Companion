@@ -12,7 +12,7 @@ from PyQt5.QtCore import (
     pyqtSignal,
     pyqtSlot,
 )
-
+from datetime import datetime, timezone
 
 def _project_path(
     root: Path,
@@ -40,6 +40,7 @@ def _project_path(
 class GuardModeService(QObject):
     mode_changed = pyqtSignal(str)
     warning_requested = pyqtSignal(str)
+    intruder_detected = pyqtSignal(dict)
     error = pyqtSignal(str)
 
     def __init__(
@@ -218,6 +219,23 @@ class GuardModeService(QObject):
                 and not self._intruder_present
             ):
                 self._intruder_present = True
+
+                self.intruder_detected.emit(
+                    {
+                        "detected_at_utc": (
+                            datetime.now(
+                                timezone.utc
+                            ).isoformat()
+                        ),
+                        "face_count": len(faces),
+                        "unknown_face_count": sum(
+                            1
+                            for face in faces
+                            if face.get("identity")
+                            == "Unknown"
+                        ),
+                    }
+                )
 
                 self.warning_requested.emit(
                     str(self.warning_wav_path)
