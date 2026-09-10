@@ -329,6 +329,28 @@ class _FaceVisionWorker(QObject):
 
                 expression_summary = primary["expression"]
 
+            frame_jpeg: bytes | None = None
+
+            unknown_person_present = any(
+                face["identity"] == "Unknown"
+                for face in detected_faces
+            )
+
+            if unknown_person_present:
+                encoded_ok, encoded_frame = cv2.imencode(
+                    ".jpg",
+                    image,
+                    [
+                        cv2.IMWRITE_JPEG_QUALITY,
+                        85,
+                    ],
+                )
+
+                if encoded_ok:
+                    frame_jpeg = (
+                        encoded_frame.tobytes()
+                    )
+
             result = {
                 "face_present": bool(detected_faces),
                 "face_count": len(detected_faces),
@@ -340,6 +362,7 @@ class _FaceVisionWorker(QObject):
                 "detection_confidence": primary.get("detection_confidence", 0.0) if primary else 0.0,
                 "owner_enrolled": self._owner_embedding is not None,
                 "faces": detected_faces,
+                "frame_jpeg": frame_jpeg,
             }
 
             self.analysis_completed.emit(result)

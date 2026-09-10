@@ -53,6 +53,7 @@ class _EmailTask(QRunnable):
         recipient: str,
         subject: str,
         body: str,
+        image_bytes: bytes | None,
         timeout_seconds: float,
     ) -> None:
         super().__init__()
@@ -66,22 +67,39 @@ class _EmailTask(QRunnable):
         self.recipient = recipient
         self.subject = subject
         self.body = body
+        self.image_bytes = image_bytes
         self.timeout_seconds = timeout_seconds
 
         self.signals = _EmailTaskSignals()
 
-    def _send_once(self) -> None:
+    def _build_message(
+        self,
+    ) -> EmailMessage:
         message = EmailMessage()
 
         message["From"] = self.sender
         message["To"] = self.recipient
         message["Subject"] = self.subject
 
-        message.set_content(self.body)
-
-        tls_context = (
-            ssl.create_default_context()
+        message.set_content(
+            self.body
         )
+
+        if self.image_bytes:
+            message.add_attachment(
+                self.image_bytes,
+                maintype="image",
+                subtype="jpeg",
+                filename=(
+                    "kibo_guard_intruder.jpg"
+                ),
+            )
+
+        return message
+
+    def _send_once(self) -> None:
+        message = self._build_message()
+        tls_context = ssl.create_default_context()
 
         if self.use_ssl:
             with smtplib.SMTP_SSL(
@@ -95,7 +113,9 @@ class _EmailTask(QRunnable):
                     self.password,
                 )
 
-                smtp.send_message(message)
+                smtp.send_message(
+                    message
+                )
 
             return
 
@@ -105,9 +125,11 @@ class _EmailTask(QRunnable):
             timeout=self.timeout_seconds,
         ) as smtp:
             smtp.ehlo()
+
             smtp.starttls(
                 context=tls_context
             )
+
             smtp.ehlo()
 
             smtp.login(
@@ -115,12 +137,14 @@ class _EmailTask(QRunnable):
                 self.password,
             )
 
-            smtp.send_message(message)
+            smtp.send_message(
+                message
+            )
 
     def run(self) -> None:
         last_error: Exception | None = None
 
-        # Retry once for a temporary network failure.
+        # Retry once for temporary network issues.
         for attempt in range(2):
             try:
                 self._send_once()
@@ -192,8 +216,6 @@ class OwnerNotificationService(QObject):
             "",
         ).strip()
 
-        # Google displays App Passwords with spaces.
-        # Removing them allows either format in .env.
         self.password = (
             os.getenv(
                 "GUARD_EMAIL_APP_PASSWORD",
@@ -260,13 +282,17 @@ class OwnerNotificationService(QObject):
         self,
         details: dict,
     ) -> bool:
-        if self._stopping or not self.enabled:
+        if (
+            self._stopping
+            or not self.enabled
+        ):
             return False
 
         if not self.is_configured:
             self.error.emit(
-                "Guard email is enabled but its sender, "
-                "App Password, or recipient is missing "
+                "Guard email is enabled but "
+                "its sender, App Password, "
+                "or recipient is missing "
                 "from .env."
             )
             return False
@@ -284,12 +310,16 @@ class OwnerNotificationService(QObject):
             return False
 
         owner_name = str(
-            details.get("owner_name")
+            details.get(
+                "owner_name"
+            )
             or "Owner"
         )
 
         detected_at = str(
-            details.get("detected_at_utc")
+            details.get(
+                "detected_at_utc"
+            )
             or "Unknown time"
         )
 
@@ -300,21 +330,40 @@ class OwnerNotificationService(QObject):
             )
         )
 
+        frame_jpeg = details.get(
+            "frame_jpeg"
+        )
+
+        if not isinstance(
+            frame_jpeg,
+            bytes,
+        ):
+            frame_jpeg = None
+
         subject = (
             "Kibo Guard Alert: "
             "Unknown person detected"
         )
 
+        attachment_line = (
+            "A camera frame is attached "
+            "to this alert.\n\n"
+            if frame_jpeg
+            else ""
+        )
+
         body = (
             f"Hello {owner_name},\n\n"
-            "Kibo detected an unknown person near "
-            "your desk while guard mode was active.\n\n"
+            "Kibo detected an unknown person "
+            "near your desk while guard mode "
+            "was active.\n\n"
             f"Detected at: {detected_at}\n"
-            f"Unknown faces detected: "
+            "Unknown faces detected: "
             f"{unknown_face_count}\n\n"
+            f"{attachment_line}"
             "The local guard warning is active. "
-            "Please check the area when it is safe "
-            "to do so.\n\n"
+            "Please check the area when it is "
+            "safe to do so.\n\n"
             "— Kibo Desk Companion"
         )
 
@@ -328,6 +377,7 @@ class OwnerNotificationService(QObject):
             recipient=self.recipient,
             subject=subject,
             body=body,
+            image_bytes=frame_jpeg,
             timeout_seconds=(
                 self.timeout_seconds
             ),
@@ -358,6 +408,7 @@ class OwnerNotificationService(QObject):
 
         self._task = None
         self.busy_changed.emit(False)
+
         self.notification_sent.emit(
             recipient
         )
@@ -378,11 +429,7 @@ class OwnerNotificationService(QObject):
 
         self._stopping = True
 
-        # Remove tasks that have not started.
         self._pool.clear()
-
-        # An SMTP request already running cannot be safely
-        # destroyed. Its network timeout bounds this wait.
         self._pool.waitForDone()
 
         self._task = None

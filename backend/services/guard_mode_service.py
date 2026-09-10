@@ -234,6 +234,9 @@ class GuardModeService(QObject):
                             if face.get("identity")
                             == "Unknown"
                         ),
+                        "frame_jpeg": result.get(
+                            "frame_jpeg"
+                        ),
                     }
                 )
 
