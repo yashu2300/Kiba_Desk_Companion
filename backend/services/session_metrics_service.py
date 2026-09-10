@@ -96,6 +96,8 @@ class SessionMetricsService(QObject):
         self._completed_away_s = 0.0
         self._completed_inactive_s = 0.0
 
+        self._suspended = False
+
         self._last_break: (
             dict[str, Any] | None
         ) = None
@@ -227,9 +229,12 @@ class SessionMetricsService(QObject):
         self,
         state: dict,
     ) -> None:
-        if not self._session_open:
+        if (
+            not self._session_open
+            or self._suspended
+        ):
             return
-
+    
         self._latest_state = dict(
             state
         )
@@ -913,3 +918,20 @@ class SessionMetricsService(QObject):
         self._away_periods.clear()
         self._inactive_periods.clear()
         self._negative_emotion_periods.clear()
+
+    @pyqtSlot(bool)
+    def set_suspended(
+        self,
+        suspended: bool,
+    ) -> None:
+        if self._suspended == suspended:
+            return
+
+        self._suspended = suspended
+
+        if suspended:
+            self._previous_owner_at_desk = None
+            self._away_started = None
+            self._inactive_started = None
+            self._negative_emotion_started = None
+            self._continuous_desk_started_s = None

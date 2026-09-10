@@ -45,6 +45,11 @@ class DeskCompanionWindow(QMainWindow):
 
         self.camera_active = False
         self.camera_starting = False
+
+        self.guard_mode_active = False
+        self.llm_busy = False
+        self.calendar_busy = False
+        self.face_enrollment_busy = False
         
         self._build_ui()
         self._connect_signals()
@@ -206,7 +211,19 @@ class DeskCompanionWindow(QMainWindow):
         layout = QVBoxLayout(panel)
         _set_margins(layout)
         layout.setSpacing(12)
-        layout.addLayout(_mini_header("⌁", "Live context", "#8499ff", make_label("NORMAL", "chipNormal")))
+        self.mode_badge = make_label(
+            "NORMAL",
+            "chipNormal",
+        )
+
+        layout.addLayout(
+            _mini_header(
+                "⌁",
+                "Live context",
+                "#8499ff",
+                self.mode_badge,
+            )
+        )
 
         row = QHBoxLayout()
         row.setSpacing(8)
@@ -438,7 +455,9 @@ class DeskCompanionWindow(QMainWindow):
         self.camera_badge.setText("LIVE")
         self.camera_badge.setObjectName("chipLive")
         self.enroll_button.show()
-        self.enroll_button.setEnabled(False)
+        self.camera_button.setEnabled(
+            not self.guard_mode_active
+        )
         self.enroll_button.setToolTip("Waiting for the first vision frame.")
         self.presence_stat.set_value("Vision pending")
         self.camera_button.setToolTip(
@@ -473,7 +492,12 @@ class DeskCompanionWindow(QMainWindow):
 
     @pyqtSlot(bool)
     def set_face_enrollment_busy(self,busy: bool) -> None:
-        self.enroll_button.setEnabled(not busy)
+        self.face_enrollment_busy = busy
+
+        self.enroll_button.setEnabled(
+            not busy
+            and not self.guard_mode_active
+        )
         self.enroll_button.setText("◌  Enrolling…" if busy else "◎  Enroll my face")
 
     @pyqtSlot(bool, str)
@@ -506,8 +530,11 @@ class DeskCompanionWindow(QMainWindow):
         self,
         busy: bool,
     ) -> None:
+        self.calendar_busy = busy
+
         self.calendar_refresh_button.setEnabled(
             not busy
+            and not self.guard_mode_active
         )
 
         self.calendar_refresh_button.setText(
@@ -694,12 +721,27 @@ class DeskCompanionWindow(QMainWindow):
         QTimer.singleShot(0, scroll_to_bottom)
 
     @pyqtSlot(bool)
-    def set_llm_busy(self,busy: bool) -> None:
-        self.reset_button.setEnabled(not busy)
-        self.goal_edit_button.setEnabled(not busy)
-        self.settings_button.setEnabled(not busy)
-        self.send_button.setEnabled(not busy)
-        self.send_button.setText("◌  Thinking…" if busy else "➤  Send")
+    def set_llm_busy(
+        self,
+        busy: bool,
+    ) -> None:
+        self.llm_busy = busy
+
+        enabled = (
+            not busy
+            and not self.guard_mode_active
+        )
+
+        self.reset_button.setEnabled(enabled)
+        self.goal_edit_button.setEnabled(enabled)
+        self.settings_button.setEnabled(enabled)
+        self.send_button.setEnabled(enabled)
+
+        self.send_button.setText(
+            "◌  Thinking…"
+            if busy
+            else "➤  Send"
+        )
 
     @pyqtSlot(dict)
     def show_llm_response(self, result: dict) -> None:
@@ -806,4 +848,89 @@ class DeskCompanionWindow(QMainWindow):
             f"Voice input error: {message}"
         )
 
-    
+
+
+    @pyqtSlot(str)
+    def set_operating_mode(
+        self,
+        mode: str,
+    ) -> None:
+        self.guard_mode_active = (
+            mode.lower() == "guard"
+        )
+
+        self.mode_badge.setText(
+            "GUARD"
+            if self.guard_mode_active
+            else "NORMAL"
+        )
+
+        self.mode_badge.setObjectName(
+            "chipGuard"
+            if self.guard_mode_active
+            else "chipNormal"
+        )
+
+        self.mode_badge.style().unpolish(
+            self.mode_badge
+        )
+        self.mode_badge.style().polish(
+            self.mode_badge
+        )
+
+        normal_enabled = (
+            not self.guard_mode_active
+        )
+
+        self.message_input.setEnabled(
+            normal_enabled
+        )
+        self.send_button.setEnabled(
+            normal_enabled
+            and not self.llm_busy
+        )
+        self.reset_button.setEnabled(
+            normal_enabled
+            and not self.llm_busy
+        )
+        self.goal_edit_button.setEnabled(
+            normal_enabled
+            and not self.llm_busy
+        )
+        self.settings_button.setEnabled(
+            normal_enabled
+            and not self.llm_busy
+        )
+        self.clock_combo.setEnabled(
+            normal_enabled
+        )
+        self.calendar_refresh_button.setEnabled(
+            normal_enabled
+            and not self.calendar_busy
+        )
+        self.camera_button.setEnabled(
+            normal_enabled
+            and not self.camera_starting
+        )
+        self.enroll_button.setEnabled(
+            normal_enabled
+            and self.camera_active
+            and not self.face_enrollment_busy
+        )
+
+        if self.guard_mode_active:
+            self.speech_status_label.setText(
+                "Voice input disabled "
+                "in guard mode"
+            )
+
+
+    @pyqtSlot(str)
+    def show_guard_error(
+        self,
+        message: str,
+    ) -> None:
+        self._show_notice(
+            f"Guard mode error: {message}"
+        )
+        

@@ -19,6 +19,7 @@ from backend.services.llm_service import ContextualLLMService, ConversationLLMSe
 from backend.services.session_metrics_service import SessionMetricsService
 from backend.services.TTS_service import TextToSpeechService
 from backend.services.STT_service import SpeechToTextService
+from backend.services.guard_mode_service import GuardModeService
 
 from backend.slots import SlotController
 from backend.state_manager import CurrentStateManager
@@ -76,6 +77,7 @@ def main() -> int:
     contextual_llm = ContextualLLMService()
     tts = TextToSpeechService()
     stt = SpeechToTextService()
+    guard_mode = GuardModeService()
 
     event_evaluator = EventEvaluatorService(
         inactivity_trigger_s=300.0,
@@ -97,6 +99,7 @@ def main() -> int:
         contextual_llm=contextual_llm,
         tts=tts,
         stt=stt,
+        guard_mode=guard_mode,
         event_evaluator=event_evaluator,
         clock=clock,
         state_manager=state_manager,

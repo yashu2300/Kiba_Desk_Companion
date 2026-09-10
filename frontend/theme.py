@@ -59,7 +59,7 @@ QLabel#sensorOnline { color: #c2cfca; font-size: 11px; }
 QLabel#sensorOffline { color: #929cb4; font-size: 11px; }
 QLabel#greenDot { color: #49d3a1; font-size: 16px; }
 QLabel#greyDot { color: #667085; font-size: 16px; }
-QLabel#chip, QLabel#chipLive, QLabel#chipNormal, QLabel#chipSimulated {
+QLabel#chip, QLabel#chipLive, QLabel#chipNormal, QLabel#chipGuard, QLabel#chipSimulated {
     border: 1px solid #303b55;
     border-radius: 9px;
     padding: 3px 10px;
@@ -67,6 +67,7 @@ QLabel#chip, QLabel#chipLive, QLabel#chipNormal, QLabel#chipSimulated {
     font-weight: 700;
     letter-spacing: 1px;
 }
+QLabel#chipGuard { color: #ffb4b4; border-color: #a83c4a; background: #3a1119; }
 QLabel#chip { color: #7f8aa4; }
 QLabel#chipLive { color: #72e2b8; border-color: #30785f; background: #0c2c24; }
 QLabel#chipNormal { color: #c7cfdf; background: #18223a; }

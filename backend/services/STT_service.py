@@ -22,42 +22,19 @@ from PyQt5.QtCore import (
 )
 
 
-def _project_path(
-    root: Path,
-    environment_name: str,
-    default: str,
-) -> Path:
-    configured = os.getenv(
-        environment_name,
-        "",
-    ).strip()
-
-    path = (
-        Path(configured).expanduser()
-        if configured
-        else Path(default)
-    )
-
-    return (
-        path
-        if path.is_absolute()
-        else root / path
-    )
+def _project_path(root: Path, environment_name: str, default: str) -> Path:
+    configured = os.getenv(environment_name, "").strip()
+    path = Path(configured).expanduser() if configured else Path(default)
+    return path if path.is_absolute() else root / path
 
 
-def _microphone_device(
-    value: str,
-) -> int | str | None:
+def _microphone_device(value: str) -> int | str | None:
     value = value.strip()
 
     if not value:
         return None
 
-    return (
-        int(value)
-        if value.isdigit()
-        else value
-    )
+    return int(value) if value.isdigit() else value
 
 
 class _WakeWordThread(QThread):
@@ -90,23 +67,20 @@ class _WakeWordThread(QThread):
         self.keywords_path = keywords_path
         self.microphone_device = microphone_device
         self.sample_rate = sample_rate
+
         self.frames_per_chunk = max(
             160,
-            int(
-                sample_rate
-                * chunk_ms
-                / 1000
-            ),
+            int(sample_rate * chunk_ms / 1000),
         )
+
         self.chunk_seconds = (
             self.frames_per_chunk
             / float(sample_rate)
         )
+
         self.num_threads = num_threads
         self.keywords_score = keywords_score
-        self.keywords_threshold = (
-            keywords_threshold
-        )
+        self.keywords_threshold = keywords_threshold
         self.silence_rms = silence_rms
         self.speech_wait_s = speech_wait_s
         self.end_silence_s = end_silence_s
@@ -117,10 +91,7 @@ class _WakeWordThread(QThread):
         self._enabled_event = threading.Event()
         self._stream: Any | None = None
 
-    def set_enabled(
-        self,
-        enabled: bool,
-    ) -> None:
+    def set_enabled(self, enabled: bool) -> None:
         if enabled:
             self._enabled_event.set()
         else:
@@ -139,10 +110,7 @@ class _WakeWordThread(QThread):
             except Exception:
                 pass
 
-    def _model_file(
-        self,
-        filename: str,
-    ) -> str:
+    def _model_file(self, filename: str) -> str:
         path = self.model_dir / filename
 
         if not path.is_file():
@@ -168,16 +136,18 @@ class _WakeWordThread(QThread):
             not self._stop_event.is_set()
             and not self.isInterruptionRequested()
         ):
-            samples, _overflowed = (
-                microphone.read(
-                    self.frames_per_chunk
-                )
+            samples, _overflowed = microphone.read(
+                self.frames_per_chunk
             )
 
-            chunk = np.asarray(
-                samples,
-                dtype=np.float32,
-            ).reshape(-1).copy()
+            chunk = (
+                np.asarray(
+                    samples,
+                    dtype=np.float32,
+                )
+                .reshape(-1)
+                .copy()
+            )
 
             frames.append(chunk)
             elapsed += self.chunk_seconds
@@ -194,6 +164,7 @@ class _WakeWordThread(QThread):
             if rms >= self.silence_rms:
                 speech_started = True
                 silence_after_speech = 0.0
+
             elif speech_started:
                 silence_after_speech += (
                     self.chunk_seconds
@@ -208,8 +179,7 @@ class _WakeWordThread(QThread):
             if (
                 speech_started
                 and elapsed >= self.min_command_s
-                and silence_after_speech
-                >= self.end_silence_s
+                and silence_after_speech >= self.end_silence_s
             ):
                 return np.concatenate(
                     frames
@@ -219,15 +189,15 @@ class _WakeWordThread(QThread):
                 )
 
             if elapsed >= self.max_command_s:
-                if not speech_started:
-                    return None
+                if speech_started:
+                    return np.concatenate(
+                        frames
+                    ).astype(
+                        np.float32,
+                        copy=False,
+                    )
 
-                return np.concatenate(
-                    frames
-                ).astype(
-                    np.float32,
-                    copy=False,
-                )
+                return None
 
         return None
 
@@ -241,37 +211,32 @@ class _WakeWordThread(QThread):
                     self.keywords_path
                 )
 
-            spotter = (
-                sherpa_onnx.KeywordSpotter(
-                    tokens=self._model_file(
-                        "tokens.txt"
-                    ),
-                    encoder=self._model_file(
-                        "encoder-epoch-12-avg-2-"
-                        "chunk-16-left-64.int8.onnx"
-                    ),
-                    decoder=self._model_file(
-                        "decoder-epoch-12-avg-2-"
-                        "chunk-16-left-64.int8.onnx"
-                    ),
-                    joiner=self._model_file(
-                        "joiner-epoch-12-avg-2-"
-                        "chunk-16-left-64.int8.onnx"
-                    ),
-                    num_threads=self.num_threads,
-                    max_active_paths=4,
-                    keywords_file=str(
-                        self.keywords_path
-                    ),
-                    keywords_score=(
-                        self.keywords_score
-                    ),
-                    keywords_threshold=(
-                        self.keywords_threshold
-                    ),
-                    num_trailing_blanks=1,
-                    provider="cpu",
-                )
+            spotter = sherpa_onnx.KeywordSpotter(
+                tokens=self._model_file(
+                    "tokens.txt"
+                ),
+                encoder=self._model_file(
+                    "encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx"
+                ),
+                decoder=self._model_file(
+                    "decoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx"
+                ),
+                joiner=self._model_file(
+                    "joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx"
+                ),
+                num_threads=self.num_threads,
+                max_active_paths=4,
+                keywords_file=str(
+                    self.keywords_path
+                ),
+                keywords_score=(
+                    self.keywords_score
+                ),
+                keywords_threshold=(
+                    self.keywords_threshold
+                ),
+                num_trailing_blanks=1,
+                provider="cpu",
             )
 
             keyword_stream = (
@@ -308,11 +273,8 @@ class _WakeWordThread(QThread):
                 was_enabled = False
 
                 while (
-                    not self
-                    ._stop_event
-                    .is_set()
-                    and not self
-                    .isInterruptionRequested()
+                    not self._stop_event.is_set()
+                    and not self.isInterruptionRequested()
                 ):
                     samples, _overflowed = (
                         microphone.read(
@@ -320,20 +282,21 @@ class _WakeWordThread(QThread):
                         )
                     )
 
-                    chunk = np.asarray(
-                        samples,
-                        dtype=np.float32,
-                    ).reshape(-1).copy()
+                    chunk = (
+                        np.asarray(
+                            samples,
+                            dtype=np.float32,
+                        )
+                        .reshape(-1)
+                        .copy()
+                    )
 
-                    if not (
-                        self
-                        ._enabled_event
-                        .is_set()
-                    ):
+                    if not self._enabled_event.is_set():
                         if was_enabled:
                             spotter.reset_stream(
                                 keyword_stream
                             )
+
                             recent_audio.clear()
 
                         was_enabled = False
@@ -343,6 +306,7 @@ class _WakeWordThread(QThread):
                         spotter.reset_stream(
                             keyword_stream
                         )
+
                         recent_audio.clear()
                         was_enabled = True
 
@@ -362,10 +326,8 @@ class _WakeWordThread(QThread):
                             keyword_stream
                         )
 
-                        result = (
-                            spotter.get_result(
-                                keyword_stream
-                            )
+                        result = spotter.get_result(
+                            keyword_stream
                         )
 
                         if result:
@@ -390,11 +352,9 @@ class _WakeWordThread(QThread):
                         keyword_stream
                     )
 
-                    command = (
-                        self._record_command(
-                            microphone,
-                            list(recent_audio),
-                        )
+                    command = self._record_command(
+                        microphone,
+                        list(recent_audio),
                     )
 
                     recent_audio.clear()
@@ -404,13 +364,11 @@ class _WakeWordThread(QThread):
                         or command.size == 0
                     ):
                         self.capture_cancelled.emit(
-                            "No command was heard "
-                            "after the wake phrase."
+                            "No command was heard after the wake phrase."
                         )
                         continue
 
                     self._enabled_event.clear()
-
                     self.command_captured.emit(
                         command
                     )
@@ -420,10 +378,10 @@ class _WakeWordThread(QThread):
         except Exception as error:
             if not self._stop_event.is_set():
                 self.initialization_failed.emit(
-                    "Speech listener could not "
-                    "start: "
-                    f"{type(error).__name__}: "
-                    f"{error}"
+                    (
+                        "Speech listener could not start: "
+                        f"{type(error).__name__}: {error}"
+                    )
                 )
 
         finally:
@@ -442,6 +400,7 @@ class _WhisperRuntime:
         self.device = device
         self.compute_type = compute_type
         self.cpu_threads = cpu_threads
+
         self.model: Any | None = None
         self._lock = threading.Lock()
 
@@ -499,6 +458,7 @@ class _PreloadWhisperTask(QRunnable):
         runtime: _WhisperRuntime,
     ) -> None:
         super().__init__()
+
         self.runtime = runtime
         self.signals = _PreloadSignals()
 
@@ -509,9 +469,10 @@ class _PreloadWhisperTask(QRunnable):
 
         except Exception as error:
             self.signals.failed.emit(
-                "Whisper could not load: "
-                f"{type(error).__name__}: "
-                f"{error}"
+                (
+                    "Whisper could not load: "
+                    f"{type(error).__name__}: {error}"
+                )
             )
 
 
@@ -527,6 +488,7 @@ class _TranscriptionTask(QRunnable):
         samples: np.ndarray,
     ) -> None:
         super().__init__()
+
         self.runtime = runtime
         self.samples = samples
         self.signals = (
@@ -547,9 +509,10 @@ class _TranscriptionTask(QRunnable):
 
         except Exception as error:
             self.signals.failed.emit(
-                "Speech transcription failed: "
-                f"{type(error).__name__}: "
-                f"{error}"
+                (
+                    "Speech transcription failed: "
+                    f"{type(error).__name__}: {error}"
+                )
             )
 
 
@@ -562,10 +525,12 @@ class SpeechToTextService(QObject):
     error = pyqtSignal(str)
 
     _WAKE_PREFIX = re.compile(
-        r"^\s*"
-        r"(?:(?:hey|hi|okay|ok)[\s,.-]+)?"
-        r"(?:kibo|keebo|kebo)\b"
-        r"[\s,:;.!?-]*",
+        (
+            r"^\s*"
+            r"(?:(?:hey|hi|okay|ok)[\s,.-]+)?"
+            r"(?:kibo|keebo|kebo)\b"
+            r"[\s,:;.!?-]*"
+        ),
         re.IGNORECASE,
     )
 
@@ -575,12 +540,7 @@ class SpeechToTextService(QObject):
     ) -> None:
         super().__init__(parent)
 
-        root = (
-            Path(__file__)
-            .resolve()
-            .parents[2]
-        )
-
+        root = Path(__file__).resolve().parents[2]
         load_dotenv(root / ".env")
 
         default_model_dir = (
@@ -722,6 +682,7 @@ class SpeechToTextService(QObject):
         self._whisper_ready = False
         self._interaction_busy = False
         self._awaiting_interaction = False
+        self._guard_suspended = False
 
     @property
     def is_ready(self) -> bool:
@@ -732,10 +693,7 @@ class SpeechToTextService(QObject):
 
     @pyqtSlot()
     def start(self) -> None:
-        if (
-            self._started
-            or self._stopping
-        ):
+        if self._started or self._stopping:
             return
 
         self._started = True
@@ -744,41 +702,54 @@ class SpeechToTextService(QObject):
             "Loading voice recognition…"
         )
 
-        self._listener = (
-            _WakeWordThread(
-                model_dir=self.model_dir,
-                keywords_path=(
-                    self.keywords_path
-                ),
-                microphone_device=(
-                    self.microphone_device
-                ),
-                sample_rate=self.sample_rate,
-                chunk_ms=self.chunk_ms,
-                num_threads=self.num_threads,
-                keywords_score=(
-                    self.keywords_score
-                ),
-                keywords_threshold=(
-                    self.keywords_threshold
-                ),
-                silence_rms=(
-                    self.silence_rms
-                ),
-                speech_wait_s=(
-                    self.speech_wait_s
-                ),
-                end_silence_s=(
-                    self.end_silence_s
-                ),
-                min_command_s=(
-                    self.min_command_s
-                ),
-                max_command_s=(
-                    self.max_command_s
-                ),
-                parent=self,
+        self._start_listener()
+
+        self._preload_task = (
+            _PreloadWhisperTask(
+                self._runtime
             )
+        )
+
+        self._preload_task.signals.ready.connect(
+            self._on_whisper_ready
+        )
+
+        self._preload_task.signals.failed.connect(
+            self._on_whisper_failed
+        )
+
+        self._pool.start(
+            self._preload_task
+        )
+
+    def _start_listener(self) -> None:
+        if (
+            self._stopping
+            or self._guard_suspended
+        ):
+            return
+
+        if (
+            self._listener is not None
+            and self._listener.isRunning()
+        ):
+            return
+
+        self._listener = _WakeWordThread(
+            model_dir=self.model_dir,
+            keywords_path=self.keywords_path,
+            microphone_device=self.microphone_device,
+            sample_rate=self.sample_rate,
+            chunk_ms=self.chunk_ms,
+            num_threads=self.num_threads,
+            keywords_score=self.keywords_score,
+            keywords_threshold=self.keywords_threshold,
+            silence_rms=self.silence_rms,
+            speech_wait_s=self.speech_wait_s,
+            end_silence_s=self.end_silence_s,
+            min_command_s=self.min_command_s,
+            max_command_s=self.max_command_s,
+            parent=self,
         )
 
         self._listener.initialized.connect(
@@ -803,23 +774,46 @@ class SpeechToTextService(QObject):
 
         self._listener.start()
 
-        self._preload_task = (
-            _PreloadWhisperTask(
-                self._runtime
+    def _stop_listener(self) -> None:
+        listener = self._listener
+        self._listener = None
+        self._wake_ready = False
+
+        if (
+            listener is not None
+            and listener.isRunning()
+        ):
+            listener.stop()
+            listener.wait()
+
+        if listener is not None:
+            listener.deleteLater()
+
+    @pyqtSlot(bool)
+    def set_guard_mode(
+        self,
+        active: bool,
+    ) -> None:
+        if self._guard_suspended == active:
+            return
+
+        self._guard_suspended = active
+        self._set_awaiting_interaction(False)
+
+        if active:
+            self._stop_listener()
+            self.ready_changed.emit(False)
+
+            self.status_changed.emit(
+                "Voice input disabled in guard mode"
             )
-        )
 
-        self._preload_task.signals.ready.connect(
-            self._on_whisper_ready
-        )
+        elif self._started and not self._stopping:
+            self.status_changed.emit(
+                "Restarting wake-word listener…"
+            )
 
-        self._preload_task.signals.failed.connect(
-            self._on_whisper_failed
-        )
-
-        self._pool.start(
-            self._preload_task
-        )
+            self._start_listener()
 
     @pyqtSlot(bool)
     def set_interaction_busy(
@@ -844,27 +838,21 @@ class SpeechToTextService(QObject):
         self,
         waiting: bool,
     ) -> None:
-        if (
-            self._awaiting_interaction
-            == waiting
-        ):
+        if self._awaiting_interaction == waiting:
             return
 
-        self._awaiting_interaction = (
-            waiting
-        )
+        self._awaiting_interaction = waiting
 
         self.capture_busy_changed.emit(
             waiting
         )
 
-    def _apply_listening_state(
-        self,
-    ) -> None:
+    def _apply_listening_state(self) -> None:
         enabled = (
             self._started
             and not self._stopping
             and self.is_ready
+            and not self._guard_suspended
             and not self._interaction_busy
             and not self._awaiting_interaction
         )
@@ -879,10 +867,14 @@ class SpeechToTextService(QObject):
                 "Say ‘Hey Kibo’ to speak"
             )
 
+        elif self._guard_suspended:
+            self.status_changed.emit(
+                "Voice input disabled in guard mode"
+            )
+
         elif self._interaction_busy:
             self.status_changed.emit(
-                "Voice input paused while "
-                "Kibo responds"
+                "Voice input paused while Kibo responds"
             )
 
         elif (
@@ -917,6 +909,7 @@ class SpeechToTextService(QObject):
         message: str,
     ) -> None:
         self._wake_ready = False
+
         self.ready_changed.emit(False)
 
         self.status_changed.emit(
@@ -932,6 +925,7 @@ class SpeechToTextService(QObject):
     ) -> None:
         self._whisper_ready = False
         self._preload_task = None
+
         self.ready_changed.emit(False)
 
         self.status_changed.emit(
@@ -952,8 +946,7 @@ class SpeechToTextService(QObject):
         self._apply_listening_state()
 
         self.status_changed.emit(
-            "Wake phrase heard — listening "
-            "for your command…"
+            "Wake phrase heard — listening for your command…"
         )
 
         self.wake_word_detected.emit(
@@ -1030,7 +1023,8 @@ class SpeechToTextService(QObject):
             self._WAKE_PREFIX.sub(
                 "",
                 transcript,
-            ).strip()
+            )
+            .strip()
         )
 
         if not clean_transcript:
@@ -1047,7 +1041,6 @@ class SpeechToTextService(QObject):
                 1500,
                 self._apply_listening_state,
             )
-
             return
 
         self.status_changed.emit(
@@ -1096,14 +1089,8 @@ class SpeechToTextService(QObject):
             return
 
         self._stopping = True
-        listener = self._listener
 
-        if (
-            listener is not None
-            and listener.isRunning()
-        ):
-            listener.stop()
-            listener.wait()
+        self._stop_listener()
 
         self._pool.clear()
         self._pool.waitForDone()
@@ -1117,4 +1104,5 @@ class SpeechToTextService(QObject):
 
         self._wake_ready = False
         self._whisper_ready = False
+
         self.ready_changed.emit(False)

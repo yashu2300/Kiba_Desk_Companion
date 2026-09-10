@@ -30,6 +30,7 @@ class CurrentState:
     face_count: int = 0
     identity: str = "Unknown"
     expression: str = "Unknown"
+
     identity_confidence: float | None = None
     expression_confidence: float = 0.0
     detection_confidence: float = 0.0
@@ -43,7 +44,7 @@ class CurrentState:
 
     calendar_events_today: tuple[
         dict[str, Any],
-        ...
+        ...,
     ] = ()
 
     current_calendar_event: (
@@ -70,8 +71,6 @@ class CurrentState:
     goal: str = ""
     automatic_nudges: bool = True
 
-    # Future calendar, posture, speech and environmental values
-    # can be placed here without immediately changing the database.
     extra_context: dict[str, Any] = field(
         default_factory=dict
     )
@@ -130,6 +129,7 @@ class CurrentState:
                 self.seconds_until_current_event_ends,
                 3,
             )
+
         return result
 
 
@@ -154,13 +154,15 @@ class StateSnapshot:
 
 
 class ShortTermStateMemory:
-    """Bounded in-memory history for future LLM context."""
+    """Bounded in-memory state history."""
 
     def __init__(
         self,
         maximum_snapshots: int = 100,
     ) -> None:
-        self._snapshots: deque[StateSnapshot] = deque(
+        self._snapshots: deque[
+            StateSnapshot
+        ] = deque(
             maxlen=maximum_snapshots
         )
 
@@ -188,9 +190,9 @@ class ShortTermStateMemory:
         self,
         limit: int = 10,
     ) -> list[dict[str, Any]]:
-        snapshots = list(self._snapshots)[
-            -max(0, limit):
-        ]
+        snapshots = list(
+            self._snapshots
+        )[-max(0, limit):]
 
         return [
             snapshot.to_dict()
@@ -198,10 +200,9 @@ class ShortTermStateMemory:
         ]
 
     def clear(self) -> None:
-        """Remove state history belonging to the previous session."""
-
         self._snapshots.clear()
         self._next_sequence = 1
+
 
 class CurrentStateManager(QObject):
     """Maintain current state and record meaningful transitions."""
@@ -223,6 +224,7 @@ class CurrentStateManager(QObject):
         super().__init__(parent)
 
         self.clock = clock
+
         self.memory = ShortTermStateMemory(
             memory_size
         )
@@ -244,11 +246,13 @@ class CurrentStateManager(QObject):
         )
 
         self._last_activity_at = elapsed
+
         self._owner_away_started_at: (
             float | None
         ) = None
 
-        # Used to prevent one bad vision frame from changing state.
+        self._suspended = False
+
         self._candidates: dict[
             str,
             tuple[Any, int],
@@ -256,13 +260,20 @@ class CurrentStateManager(QObject):
 
         self._timer = QTimer(self)
         self._timer.setInterval(1000)
-        self._timer.timeout.connect(self._tick)
+        self._timer.timeout.connect(
+            self._tick
+        )
 
     @staticmethod
     def _calendar_signature(
         events: tuple[dict[str, Any], ...],
     ) -> tuple:
-        """Exclude countdowns that change every second."""
+        """
+        Return stable calendar fields.
+
+        Countdown values are excluded because they change
+        continuously and should not create snapshots.
+        """
 
         return tuple(
             (
@@ -280,13 +291,17 @@ class CurrentStateManager(QObject):
         self,
         result: dict,
     ) -> None:
-        """Update calendar state and record real transitions."""
+        if self._suspended:
+            return
 
         previous = self.current
 
         events = tuple(
             dict(event)
-            for event in result.get("events", [])
+            for event in result.get(
+                "events",
+                [],
+            )
         )
 
         current_event = result.get(
@@ -300,10 +315,16 @@ class CurrentStateManager(QObject):
         proposed = replace(
             previous,
             calendar_connected=bool(
-                result.get("connected", False)
+                result.get(
+                    "connected",
+                    False,
+                )
             ),
             calendar_day=str(
-                result.get("calendar_day", "")
+                result.get(
+                    "calendar_day",
+                    "",
+                )
             ),
             calendar_events_today=events,
             current_calendar_event=(
@@ -335,7 +356,9 @@ class CurrentStateManager(QObject):
                 else None
             ),
             calendar_last_sync_utc=(
-                result.get("synced_at_utc")
+                result.get(
+                    "synced_at_utc"
+                )
             ),
         )
 
@@ -372,11 +395,13 @@ class CurrentStateManager(QObject):
             )
 
         previous_current_id = (
-            previous.current_calendar_event or {}
+            previous.current_calendar_event
+            or {}
         ).get("id")
 
         current_id = (
-            proposed.current_calendar_event or {}
+            proposed.current_calendar_event
+            or {}
         ).get("id")
 
         if current_id != previous_current_id:
@@ -385,11 +410,13 @@ class CurrentStateManager(QObject):
             )
 
         previous_next_id = (
-            previous.next_calendar_event or {}
+            previous.next_calendar_event
+            or {}
         ).get("id")
 
         next_id = (
-            proposed.next_calendar_event or {}
+            proposed.next_calendar_event
+            or {}
         ).get("id")
 
         if next_id != previous_next_id:
@@ -422,14 +449,41 @@ class CurrentStateManager(QObject):
     def stop(self) -> None:
         self._timer.stop()
 
+    @pyqtSlot(bool)
+    def set_suspended(
+        self,
+        suspended: bool,
+    ) -> None:
+        """
+        Suspend normal state collection during guard mode.
+
+        Raw vision can continue going to GuardModeService, but
+        CurrentState and the database snapshot stream are paused.
+        """
+
+        if self._suspended == suspended:
+            return
+
+        self._suspended = suspended
+        self._candidates.clear()
+
+        if suspended:
+            self._timer.stop()
+            return
+
+        elapsed = self.clock.elapsed_seconds()
+
+        self._last_activity_at = elapsed
+        self._owner_away_started_at = None
+
+        self._timer.start()
+
     def _debounced(
         self,
         field_name: str,
         value: Any,
         samples: int,
     ) -> Any:
-        """Accept a changed value after repeated observations."""
-
         current_value = getattr(
             self.current,
             field_name,
@@ -443,9 +497,11 @@ class CurrentStateManager(QObject):
 
             return current_value
 
-        candidate, count = self._candidates.get(
-            field_name,
-            (None, 0),
+        candidate, count = (
+            self._candidates.get(
+                field_name,
+                (None, 0),
+            )
         )
 
         if candidate == value:
@@ -459,8 +515,6 @@ class CurrentStateManager(QObject):
             count,
         )
 
-        # An uninitialised Boolean can accept its first value
-        # immediately. Later changes are debounced.
         required = (
             1
             if current_value is None
@@ -481,22 +535,27 @@ class CurrentStateManager(QObject):
         self,
         state: CurrentState,
     ) -> CurrentState:
-        elapsed = self.clock.elapsed_seconds()
+        elapsed = (
+            self.clock.elapsed_seconds()
+        )
 
         away_seconds = 0.0
 
         if (
             state.owner_at_desk is False
-            and self._owner_away_started_at is not None
+            and self._owner_away_started_at
+            is not None
         ):
             away_seconds = max(
                 0.0,
-                elapsed - self._owner_away_started_at,
+                elapsed
+                - self._owner_away_started_at,
             )
 
         inactive_seconds = max(
             0.0,
-            elapsed - self._last_activity_at,
+            elapsed
+            - self._last_activity_at,
         )
 
         return replace(
@@ -511,10 +570,16 @@ class CurrentStateManager(QObject):
     def _commit(
         self,
         trigger: str,
-        snapshot_fields: tuple[str, ...] | None = None,
+        snapshot_fields: (
+            tuple[str, ...] | None
+        ) = None,
         **updates: Any,
     ) -> None:
+        if self._suspended:
+            return
+
         previous = self.current
+
         proposed = replace(
             previous,
             **updates,
@@ -529,7 +594,9 @@ class CurrentStateManager(QObject):
                     self.clock.elapsed_seconds()
                 )
             else:
-                self._owner_away_started_at = None
+                self._owner_away_started_at = (
+                    None
+                )
 
         proposed = self._refresh_durations(
             proposed
@@ -538,8 +605,14 @@ class CurrentStateManager(QObject):
         all_changed_fields = tuple(
             field_name
             for field_name in updates
-            if getattr(previous, field_name)
-            != getattr(proposed, field_name)
+            if getattr(
+                previous,
+                field_name,
+            )
+            != getattr(
+                proposed,
+                field_name,
+            )
         )
 
         changed_fields = (
@@ -547,12 +620,15 @@ class CurrentStateManager(QObject):
             if snapshot_fields is None
             else tuple(
                 field_name
-                for field_name in all_changed_fields
-                if field_name in snapshot_fields
+                for field_name
+                in all_changed_fields
+                if field_name
+                in snapshot_fields
             )
         )
 
         self.current = proposed
+
         self.state_changed.emit(
             proposed.to_dict()
         )
@@ -568,11 +644,19 @@ class CurrentStateManager(QObject):
         self,
         result: dict,
     ) -> None:
-        """Convert the vision result into contextual state."""
+        if self._suspended:
+            return
 
-        faces = result.get("faces", [])
+        faces = result.get(
+            "faces",
+            [],
+        )
+
         face_count = int(
-            result.get("face_count", 0)
+            result.get(
+                "face_count",
+                0,
+            )
         )
 
         owner_enrolled = bool(
@@ -585,35 +669,89 @@ class CurrentStateManager(QObject):
         person_at_desk = face_count > 0
 
         if owner_enrolled:
-            owner_at_desk: bool | None = any(
-                face.get("identity") == "Owner"
+            owner_at_desk: (
+                bool | None
+            ) = any(
+                face.get("identity")
+                == "Owner"
                 for face in faces
             )
         else:
             owner_at_desk = None
 
         unknown_present = any(
-            face.get("identity") == "Unknown"
+            face.get("identity")
+            == "Unknown"
             for face in faces
         )
 
-        identity_value = str(result.get("identity", "Unknown"))
-        expression_value = str(result.get("expression", "Unknown"))
-        accepted_identity = self._debounced("identity", identity_value, 2)
-        accepted_expression = self._debounced("expression", expression_value, 3)
+        identity_value = str(
+            result.get(
+                "identity",
+                "Unknown",
+            )
+        )
+
+        expression_value = str(
+            result.get(
+                "expression",
+                "Unknown",
+            )
+        )
+
+        accepted_identity = (
+            self._debounced(
+                "identity",
+                identity_value,
+                2,
+            )
+        )
+
+        accepted_expression = (
+            self._debounced(
+                "expression",
+                expression_value,
+                3,
+            )
+        )
 
         identity_confidence = (
-            float(result["identity_confidence"])
-            if result.get("identity_confidence") is not None
+            float(
+                result[
+                    "identity_confidence"
+                ]
+            )
+            if result.get(
+                "identity_confidence"
+            )
+            is not None
             else None
         )
-        expression_confidence = float(result.get("expression_confidence", 0.0))
 
-        if accepted_identity != identity_value:
-            identity_confidence = self.current.identity_confidence
+        expression_confidence = float(
+            result.get(
+                "expression_confidence",
+                0.0,
+            )
+        )
 
-        if accepted_expression != expression_value:
-            expression_confidence = self.current.expression_confidence
+        if (
+            accepted_identity
+            != identity_value
+        ):
+            identity_confidence = (
+                self.current
+                .identity_confidence
+            )
+
+        if (
+            accepted_expression
+            != expression_value
+        ):
+            expression_confidence = (
+                self.current
+                .expression_confidence
+            )
 
         updates = {
             "person_at_desk": self._debounced(
@@ -638,10 +776,17 @@ class CurrentStateManager(QObject):
             ),
             "identity": accepted_identity,
             "expression": accepted_expression,
-            "identity_confidence": identity_confidence,
-            "expression_confidence": expression_confidence,
+            "identity_confidence": (
+                identity_confidence
+            ),
+            "expression_confidence": (
+                expression_confidence
+            ),
             "detection_confidence": float(
-                result.get("detection_confidence", 0.0)
+                result.get(
+                    "detection_confidence",
+                    0.0,
+                )
             ),
         }
 
@@ -659,14 +804,12 @@ class CurrentStateManager(QObject):
         )
 
     @pyqtSlot()
-    def mark_vision_unavailable(self) -> None:
-        """Clear vision state when the camera is stopped."""
-
+    def mark_vision_unavailable(
+        self,
+    ) -> None:
         self._candidates.clear()
         self._owner_away_started_at = None
 
-        # We use None instead of False because a disabled camera
-        # cannot tell whether the owner is away.
         self._commit(
             "vision_unavailable",
             person_at_desk=None,
@@ -685,19 +828,27 @@ class CurrentStateManager(QObject):
         self,
         source: str = "mouse",
     ) -> None:
-        """Reset inactivity when an activity service reports input."""
+        if self._suspended:
+            return
 
-        previous = self._refresh_durations(
-            self.current
+        previous = (
+            self._refresh_durations(
+                self.current
+            )
         )
 
-        was_inactive = previous.is_inactive
+        was_inactive = (
+            previous.is_inactive
+        )
+
         self._last_activity_at = (
             self.clock.elapsed_seconds()
         )
 
         self.current = replace(
-            self._refresh_durations(previous),
+            self._refresh_durations(
+                previous
+            ),
             inactive_seconds=0.0,
             is_inactive=False,
         )
@@ -706,8 +857,6 @@ class CurrentStateManager(QObject):
             self.current.to_dict()
         )
 
-        # Ordinary mouse movements should not create thousands
-        # of database rows. Store only inactive -> active.
         if was_inactive:
             self.capture_snapshot(
                 "user_active",
@@ -752,9 +901,13 @@ class CurrentStateManager(QObject):
         goal: str,
         automatic_nudges: bool,
     ) -> None:
-        """Start clean short-term state for another user."""
+        """
+        Start clean short-term state for another user.
+        """
 
-        elapsed = self.clock.elapsed_seconds()
+        elapsed = (
+            self.clock.elapsed_seconds()
+        )
 
         self.memory.clear()
         self._candidates.clear()
@@ -763,12 +916,11 @@ class CurrentStateManager(QObject):
 
         self._owner_away_started_at = (
             elapsed
-            if self.current.owner_at_desk is False
+            if self.current.owner_at_desk
+            is False
             else None
         )
 
-        # Preserve current shared sensor/calendar data,
-        # but replace user-specific session information.
         self.current = replace(
             self.current,
             session_id=session_id,
@@ -794,14 +946,21 @@ class CurrentStateManager(QObject):
                 "goal",
                 "automatic_nudges",
             ),
-    )
-    
+        )
+
     @pyqtSlot()
     def _tick(self) -> None:
-        previous_inactive = self.current.is_inactive
+        if self._suspended:
+            return
 
-        refreshed = self._refresh_durations(
-            self.current
+        previous_inactive = (
+            self.current.is_inactive
+        )
+
+        refreshed = (
+            self._refresh_durations(
+                self.current
+            )
         )
 
         should_be_inactive = (
@@ -818,7 +977,10 @@ class CurrentStateManager(QObject):
             self.current.to_dict()
         )
 
-        if not previous_inactive and should_be_inactive:
+        if (
+            not previous_inactive
+            and should_be_inactive
+        ):
             self.capture_snapshot(
                 "inactivity_changed",
                 (
@@ -830,10 +992,14 @@ class CurrentStateManager(QObject):
     def capture_snapshot(
         self,
         trigger: str,
-        changed_fields: tuple[str, ...] = (),
+        changed_fields: (
+            tuple[str, ...]
+        ) = (),
     ) -> dict[str, Any]:
-        self.current = self._refresh_durations(
-            self.current
+        self.current = (
+            self._refresh_durations(
+                self.current
+            )
         )
 
         snapshot = self.memory.append(
@@ -843,11 +1009,17 @@ class CurrentStateManager(QObject):
         )
 
         payload = snapshot.to_dict()
+
         print(
-            f"[STATE MEMORY] Snapshot created: "
-            f"{trigger} -> {list(changed_fields)}"
+            "[STATE MEMORY] "
+            f"Snapshot created: "
+            f"{trigger} -> "
+            f"{list(changed_fields)}"
         )
-        self.snapshot_created.emit(payload)
+
+        self.snapshot_created.emit(
+            payload
+        )
 
         return payload
 
@@ -855,8 +1027,6 @@ class CurrentStateManager(QObject):
         self,
         history_limit: int = 10,
     ) -> dict[str, Any]:
-        """Return future LLM contextual input."""
-
         return {
             "current_state": (
                 self._refresh_durations(
@@ -869,8 +1039,14 @@ class CurrentStateManager(QObject):
                 )
             ),
         }
-    def current_state_payload(self) -> dict[str, Any]:
-        """Return current state without historical snapshots."""
 
-        self.current = self._refresh_durations(self.current)
+    def current_state_payload(
+        self,
+    ) -> dict[str, Any]:
+        self.current = (
+            self._refresh_durations(
+                self.current
+            )
+        )
+
         return self.current.to_dict()
