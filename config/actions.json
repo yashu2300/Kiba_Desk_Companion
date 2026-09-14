@@ -1,54 +1,223 @@
 {
   "no_action": {
-    "description": "Give only a verbal response and do not move the robot.",
-    "exclusive": true
+    "description": "Give only a verbal response without moving the robot.",
+    "exclusive": true,
+    "petoi": null
   },
   "stand_up": {
-    "description": "Move from rest into a stable standing pose.",
-    "exclusive": false
+    "description": "Move from rest into a stable neutral standing pose.",
+    "exclusive": false,
+    "petoi": {
+      "command": "kbalance",
+      "duration_s": 1.5
+    }
   },
   "sit_down": {
     "description": "Move into a seated pose.",
-    "exclusive": false
+    "exclusive": false,
+    "petoi": {
+      "command": "ksit",
+      "duration_s": 2.0
+    }
   },
   "rest": {
     "description": "Move into the low-power resting pose.",
-    "exclusive": false
+    "exclusive": false,
+    "petoi": {
+      "command": "krest",
+      "duration_s": 2.0
+    }
   },
   "balance": {
-    "description": "Adopt the stable balanced standing pose.",
-    "exclusive": false
+    "description": "Adopt a stable neutral standing pose.",
+    "exclusive": false,
+    "petoi": {
+      "command": "kbalance",
+      "duration_s": 1.5
+    }
   },
   "walk_forward": {
-    "description": "Walk forward a short, safe demonstration distance.",
-    "exclusive": false
+    "description": "Walk forward for a short demonstration. Use when the user explicitly requests forward movement.",
+    "exclusive": false,
+    "petoi": {
+      "command": "kwkF",
+      "duration_s": 2.0,
+      "stop_command": "kbalance"
+    }
   },
   "walk_backward": {
-    "description": "Walk backward a short, safe demonstration distance.",
-    "exclusive": false
+    "description": "Walk backward for a short demonstration. Use only when backward movement is explicitly requested.",
+    "exclusive": false,
+    "petoi": {
+      "command": "kbk",
+      "duration_s": 2.0,
+      "stop_command": "kbalance"
+    }
   },
   "turn_left": {
-    "description": "Turn left in place by a small demonstration amount.",
-    "exclusive": false
+    "description": "Perform the configured leftward turning movement for a short duration.",
+    "exclusive": false,
+    "petoi": {
+      "command": "ktrL",
+      "duration_s": 1.5,
+      "stop_command": "kbalance"
+    }
   },
   "turn_right": {
-    "description": "Turn right in place by a small demonstration amount.",
-    "exclusive": false
+    "description": "Perform the configured rightward turning movement for a short duration.",
+    "exclusive": false,
+    "petoi": {
+      "command": "ktrR",
+      "duration_s": 1.5,
+      "stop_command": "kbalance"
+    }
+  },
+  "crawl_right": {
+    "description": "Crawl toward the right for a short duration. Use only when the user requests this movement.",
+    "exclusive": false,
+    "petoi": {
+      "command": "kcrR",
+      "duration_s": 2.0,
+      "stop_command": "kbalance"
+    }
   },
   "wave": {
-    "description": "Perform a short friendly greeting gesture.",
-    "exclusive": false
+    "description": "Perform a friendly greeting gesture. Suitable for greetings, farewells, and brief attention signals.",
+    "exclusive": false,
+    "petoi": {
+      "command": "khi",
+      "duration_s": 3.0
+    }
   },
   "stretch": {
-    "description": "Perform a short stretching gesture.",
-    "exclusive": false
+    "description": "Perform a short stretching gesture. Suitable for an accepted or appropriate break suggestion.",
+    "exclusive": false,
+    "petoi": {
+      "command": "kstr",
+      "duration_s": 3.0
+    }
+  },
+  "nod": {
+    "description": "Nod the head briefly to show agreement, acknowledgement, or gentle encouragement.",
+    "exclusive": false,
+    "petoi": {
+      "command": "knd",
+      "duration_s": 2.0
+    }
+  },
+  "cheer": {
+    "description": "Perform a cheerful celebration gesture when the user shares an achievement or good news.",
+    "exclusive": false,
+    "petoi": {
+      "command": "kchr",
+      "duration_s": 3.5
+    }
+  },
+  "high_five": {
+    "description": "Offer a high-five for congratulations, celebration, or playful encouragement.",
+    "exclusive": false,
+    "petoi": {
+      "command": "kfiv",
+      "duration_s": 3.0
+    }
+  },
+  "come_here": {
+    "description": "Perform the come-here gesture when the user explicitly asks Kiba to beckon or call someone closer.",
+    "exclusive": false,
+    "petoi": {
+      "command": "kcmh",
+      "duration_s": 3.0
+    }
+  },
+  "good_boy": {
+    "description": "Perform the good-boy response when the user praises or positively acknowledges Kiba.",
+    "exclusive": false,
+    "petoi": {
+      "command": "kgdb",
+      "duration_s": 3.0
+    }
+  },
+  "hand_shake": {
+    "description": "Offer a paw-shake when the user asks to shake hands or when it naturally supports a greeting.",
+    "exclusive": false,
+    "petoi": {
+      "command": "khsk",
+      "duration_s": 3.0
+    }
+  },
+  "hands_up": {
+    "description": "Raise the front paws in a playful hands-up gesture. Prefer explicit or clearly playful requests.",
+    "exclusive": false,
+    "petoi": {
+      "command": "khu",
+      "duration_s": 3.0
+    }
+  },
+  "wave_head": {
+    "description": "Wave or sway the head as a subtle friendly or playful gesture.",
+    "exclusive": false,
+    "petoi": {
+      "command": "kwh",
+      "duration_s": 3.0
+    }
+  },
+  "sniff": {
+    "description": "Perform a playful sniffing behaviour when it naturally matches the conversation or an explicit request.",
+    "exclusive": false,
+    "petoi": {
+      "command": "ksnf",
+      "duration_s": 3.0
+    }
+  },
+  "angry": {
+    "description": "Perform a theatrical angry gesture only when the user explicitly requests the trick. Never use it in response to conflict or a negative emotion estimate.",
+    "exclusive": true,
+    "petoi": {
+      "command": "kang",
+      "duration_s": 3.5
+    }
+  },
+  "halloween_gait": {
+    "description": "Perform the Halloween gait only when the user explicitly requests this playful trick.",
+    "exclusive": true,
+    "petoi": {
+      "command": "khlw",
+      "duration_s": 3.0,
+      "stop_command": "kbalance"
+    }
+  },
+  "moon_walk": {
+    "description": "Perform the moon-walk trick only when the user explicitly requests it.",
+    "exclusive": true,
+    "petoi": {
+      "command": "kmw",
+      "duration_s": 4.0
+    }
+  },
+  "roll": {
+    "description": "Perform the rolling trick only when the user explicitly requests it and the robot has sufficient space.",
+    "exclusive": true,
+    "petoi": {
+      "command": "krl",
+      "duration_s": 4.0
+    }
+  },
+  "be_table": {
+    "description": "Adopt the table pose only when the user explicitly requests this trick.",
+    "exclusive": true,
+    "petoi": {
+      "command": "ktbl",
+      "duration_s": 3.0
+    }
   },
   "guard_mode": {
-    "description": "Enter desk-guard operating mode. This action must be returned alone.",
-    "exclusive": true
+    "description": "Enter desk-guard operating mode only after an explicit user request. This action must be returned alone.",
+    "exclusive": true,
+    "petoi": null
   },
   "play_mode": {
-    "description": "Enter playful companion operating mode. This action must be returned alone.",
-    "exclusive": true
+    "description": "Enter playful companion mode only after an explicit user request. This action must be returned alone.",
+    "exclusive": true,
+    "petoi": null
   }
 }

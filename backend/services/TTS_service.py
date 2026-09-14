@@ -325,6 +325,15 @@ class TextToSpeechService(QObject):
 
             return dict(self._latest_metadata)
 
+    def latest_audio(self) -> tuple[bytes, dict[str, Any]] | None:
+        """Return matching WAV bytes and metadata atomically."""
+
+        with self._audio_lock:
+            if self._latest_wav is None or self._latest_metadata is None:
+                return None
+
+            return self._latest_wav, dict(self._latest_metadata)
+
     @pyqtSlot()
     def start(self) -> None:
         if self._started or self._stopping:

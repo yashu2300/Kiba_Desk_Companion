@@ -8,6 +8,7 @@ from PyQt5.QtCore import QObject, pyqtSlot
 
 from backend.database import Database
 from backend.demo_clock import DemoClock
+from backend.fastapi_backend import FastAPIServerService
 from backend.state_manager import CurrentStateManager
 from backend.services.STT_service import SpeechToTextService
 from backend.services.TTS_service import TextToSpeechService
@@ -25,6 +26,7 @@ from backend.services.llm_service import (
     ContextualLLMService,
     ConversationLLMService,
 )
+from backend.services.petoi_service import PetoiService
 from backend.services.session_metrics_service import SessionMetricsService
 from backend.services.webcam_service import WebcamService
 from frontend.main_window import DeskCompanionWindow
@@ -41,6 +43,8 @@ class SlotController(QObject):
         conversation_llm: ConversationLLMService,
         contextual_llm: ContextualLLMService,
         tts: TextToSpeechService,
+        petoi: PetoiService,
+        fastapi_server: FastAPIServerService,
         stt: SpeechToTextService,
         guard_mode: GuardModeService,
         owner_notification: OwnerNotificationService,
@@ -62,6 +66,8 @@ class SlotController(QObject):
         self.conversation_llm = conversation_llm
         self.contextual_llm = contextual_llm
         self.tts = tts
+        self.petoi = petoi
+        self.fastapi_server = fastapi_server
         self.stt = stt
         self.guard_mode = guard_mode
         self.owner_notification = owner_notification
@@ -81,8 +87,11 @@ class SlotController(QObject):
         self._conversation_llm_busy = False
         self._contextual_llm_busy = False
         self._tts_busy = False
+        self._petoi_busy = False
+        self._fastapi_ready = False
         self._speech_input_busy = False
         self._guard_mode_active = False
+        self._pending_petoi_actions: dict[str, list[str]] = {}
 
     def connect_window_to_slots(
         self,
@@ -103,6 +112,8 @@ class SlotController(QObject):
         window.reset_conversation_requested.connect(
             self.on_conversation_reset_requested
         )
+        window.petoi_ports_refresh_requested.connect(self.petoi.refresh_ports)
+        window.petoi_connect_requested.connect(self.petoi.connect_selected_port)
 
         # Webcam signals.
         self.webcam.frame_ready.connect(window.set_camera_frame)
@@ -173,6 +184,25 @@ class SlotController(QObject):
         self.tts.audio_ready.connect(self._on_tts_audio_ready)
         self.tts.playback_finished.connect(self._on_tts_playback_finished)
         self.tts.error.connect(self._on_tts_error)
+
+        # Latest-WAV API and Petoi serial transport.
+        self.fastapi_server.server_started.connect(self._on_fastapi_server_started)
+        self.fastapi_server.server_stopped.connect(self._on_fastapi_server_stopped)
+        self.fastapi_server.error.connect(window.show_petoi_error)
+        self.fastapi_server.error.connect(self._on_fastapi_server_error)
+        self.petoi.ports_changed.connect(window.set_petoi_ports)
+        self.petoi.connection_changed.connect(window.set_petoi_connection)
+        self.petoi.connection_busy_changed.connect(window.set_petoi_connection_busy)
+        self.petoi.status_changed.connect(window.show_petoi_status)
+        self.petoi.status_changed.connect(self._on_petoi_status_changed)
+        self.petoi.busy_changed.connect(self._on_petoi_busy_changed)
+        self.petoi.command_sent.connect(window.show_petoi_command)
+        self.petoi.command_sent.connect(self._on_petoi_command_sent)
+        self.petoi.sequence_finished.connect(self._on_petoi_sequence_finished)
+        self.petoi.sequence_failed.connect(window.show_petoi_error)
+        self.petoi.sequence_failed.connect(self._on_petoi_error)
+        self.petoi.error.connect(window.show_petoi_error)
+        self.petoi.error.connect(self._on_petoi_error)
 
         # Always-listening STT signals.
         self.stt.ready_changed.connect(self._on_stt_ready_changed)
@@ -694,6 +724,7 @@ class SlotController(QObject):
                 context_data=payload,
             )
 
+            self.petoi.ensure_connected(reason="conversation_llm_dispatch")
             self.conversation_llm.generate(
                 turn_id,
                 payload,
@@ -750,6 +781,7 @@ class SlotController(QObject):
             context_data=payload,
         )
 
+        self.petoi.ensure_connected(reason="contextual_llm_dispatch")
         self.contextual_llm.generate(
             turn_id,
             payload,
@@ -791,17 +823,14 @@ class SlotController(QObject):
             )
         ).strip()
 
+        turn_id = str(result.get("turn_id", ""))
+
         self.database.save_message(
             session_id=self.session_id,
             role="assistant",
             content=text_response,
             source=f"{persona}_llm",
-            turn_id=str(
-                result.get(
-                    "turn_id",
-                    "",
-                )
-            ),
+            turn_id=turn_id,
             action_data={
                 "actions": actions,
                 "model": result.get("model"),
@@ -814,12 +843,6 @@ class SlotController(QObject):
         print(f"[LLM TEXT] {text_response}")
         print(f"[LLM ACTIONS] {actions}")
 
-        for action in actions:
-            if action != "no_action":
-                print(
-                    f"[ACTION SIMULATED] {action}"
-                )
-
         # Guard mode is entered before TTS, so the LLM response
         # is not spoken and guard audio takes control.
         if (
@@ -829,14 +852,10 @@ class SlotController(QObject):
             return
 
         if text_response:
+            self._pending_petoi_actions[turn_id] = actions
             self.tts.speak(
                 text=text_response,
-                turn_id=str(
-                    result.get(
-                        "turn_id",
-                        "",
-                    )
-                ),
+                turn_id=turn_id,
                 persona=persona,
             )
 
@@ -883,6 +902,27 @@ class SlotController(QObject):
             f"size={result['size_bytes']} bytes."
         )
 
+        turn_id = str(result.get("turn_id", ""))
+        persona = str(result.get("persona", "unknown"))
+        actions = [] if persona == "guard" else self._pending_petoi_actions.pop(turn_id, [])
+
+        if not self._fastapi_ready:
+            self._on_petoi_error("The TTS WAV endpoint is unavailable; Petoi playback was skipped.")
+            return
+
+        queued = self.petoi.play_audio_then_actions(
+            turn_id=turn_id,
+            revision=int(result["revision"]),
+            audio_duration_s=float(result["duration_s"]),
+            actions=actions,
+        )
+
+        if queued:
+            print(
+                f"[PETOI] Queued WAV revision {result['revision']} for {result['duration_s']:.2f}s, "
+                f"followed by actions {actions}."
+            )
+
     @pyqtSlot(dict)
     def _on_tts_playback_finished(
         self,
@@ -899,7 +939,54 @@ class SlotController(QObject):
         self,
         message: str,
     ) -> None:
+        if message.startswith("turn_id="):
+            failed_turn_id = message.split(":", 1)[0].removeprefix("turn_id=")
+            self._pending_petoi_actions.pop(failed_turn_id, None)
         print(f"[TTS ERROR] {message}")
+
+    # ------------------------------------------------------------------
+    # FastAPI and Petoi
+    # ------------------------------------------------------------------
+
+    @pyqtSlot(str)
+    def _on_fastapi_server_started(self, local_url: str) -> None:
+        self._fastapi_ready = True
+        print(f"[FASTAPI] Latest TTS WAV endpoint ready at {local_url}/tts.wav")
+
+    @pyqtSlot()
+    def _on_fastapi_server_stopped(self) -> None:
+        self._fastapi_ready = False
+        if not self._shutting_down:
+            print("[FASTAPI] Latest TTS WAV endpoint stopped.")
+
+    @pyqtSlot(str)
+    def _on_fastapi_server_error(self, message: str) -> None:
+        print(f"[FASTAPI ERROR] {message}")
+
+    @pyqtSlot(str)
+    def _on_petoi_status_changed(self, message: str) -> None:
+        print(f"[PETOI STATUS] {message}")
+
+    @pyqtSlot(bool)
+    def _on_petoi_busy_changed(self, busy: bool) -> None:
+        self._petoi_busy = busy
+
+    @pyqtSlot(dict)
+    def _on_petoi_command_sent(self, result: dict) -> None:
+        print(
+            f"[PETOI COMMAND] port={result['port']}, kind={result['kind']}, command={result['command']}"
+        )
+
+    @pyqtSlot(dict)
+    def _on_petoi_sequence_finished(self, result: dict) -> None:
+        print(
+            f"[PETOI] Sequence finished: turn_id={result['turn_id']}, "
+            f"revision={result['revision']}, actions={result['actions']}"
+        )
+
+    @pyqtSlot(str)
+    def _on_petoi_error(self, message: str) -> None:
+        print(f"[PETOI ERROR] {message}")
 
     # ------------------------------------------------------------------
     # Guard mode
@@ -1089,7 +1176,12 @@ class SlotController(QObject):
         self.face_recognition.stop()
         self.conversation_llm.stop()
         self.contextual_llm.stop()
+
+        # Stop serial work before removing the WAV that a running Petoi
+        # command may still be using.
+        self.petoi.stop()
         self.tts.stop()
+        self.fastapi_server.stop()
         self.state_manager.stop()
 
         # Keep the database open until final session data is saved.

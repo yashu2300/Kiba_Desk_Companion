@@ -21,6 +21,8 @@ from backend.services.TTS_service import TextToSpeechService
 from backend.services.STT_service import SpeechToTextService
 from backend.services.guard_mode_service import GuardModeService
 from backend.services.email_service import OwnerNotificationService
+from backend.services.petoi_service import PetoiService
+from backend.fastapi_backend import FastAPIServerService
 
 from backend.slots import SlotController
 from backend.state_manager import CurrentStateManager
@@ -77,6 +79,8 @@ def main() -> int:
     conversation_llm = ConversationLLMService()
     contextual_llm = ContextualLLMService()
     tts = TextToSpeechService()
+    petoi = PetoiService()
+    fastapi_server = FastAPIServerService(tts=tts)
     stt = SpeechToTextService()
     guard_mode = GuardModeService()
     owner_notification = OwnerNotificationService()
@@ -100,6 +104,8 @@ def main() -> int:
         conversation_llm=conversation_llm,
         contextual_llm=contextual_llm,
         tts=tts,
+        petoi=petoi,
+        fastapi_server=fastapi_server,
         stt=stt,
         guard_mode=guard_mode,
         owner_notification=owner_notification,
@@ -118,8 +124,8 @@ def main() -> int:
     activity_monitor.start()
     calendar.start()
     tts.start()
-
-
+    fastapi_server.start()
+    petoi.start()
 
     window.showMaximized()
     window.show()

@@ -21,6 +21,8 @@ class DeskCompanionWindow(QMainWindow):
     calendar_refresh_requested = pyqtSignal()
     message_send_requested = pyqtSignal(str, str) # Text Input sent
     reset_conversation_requested = pyqtSignal()
+    petoi_ports_refresh_requested = pyqtSignal()
+    petoi_connect_requested = pyqtSignal(str)
     user_activity_detected = pyqtSignal(str)
     window_close_requested = pyqtSignal()
     action_execute_requested = pyqtSignal(str)
@@ -50,6 +52,8 @@ class DeskCompanionWindow(QMainWindow):
         self.llm_busy = False
         self.calendar_busy = False
         self.face_enrollment_busy = False
+        self.petoi_connected = False
+        self.petoi_connecting = False
         
         self._build_ui()
         self._connect_signals()
@@ -271,9 +275,25 @@ class DeskCompanionWindow(QMainWindow):
         layout = QVBoxLayout(panel)
         _set_margins(layout)
         layout.setSpacing(10)
+        self.petoi_status_label = make_label("DISCONNECTED", "chipDisconnected")
         layout.addLayout(
-            _mini_header("♙", "Recent Petoi Output", "#b697ff", make_label("SIMULATED", "chipSimulated"))
+            _mini_header("♙", "Recent Petoi Output", "#b697ff", self.petoi_status_label)
         )
+
+        port_controls = QHBoxLayout()
+        port_controls.setSpacing(7)
+        self.petoi_port_combo = QComboBox()
+        self.petoi_port_combo.setToolTip("Select the Bluetooth serial COM port used by Petoi")
+        self.petoi_port_combo.addItem("Discovering COM ports…", "")
+        self.petoi_refresh_button = QPushButton("↻")
+        self.petoi_refresh_button.setObjectName("linkButton")
+        self.petoi_refresh_button.setToolTip("Refresh available COM ports")
+        self.petoi_connect_button = QPushButton("Connect")
+        self.petoi_connect_button.setEnabled(False)
+        port_controls.addWidget(self.petoi_port_combo, 1)
+        port_controls.addWidget(self.petoi_refresh_button)
+        port_controls.addWidget(self.petoi_connect_button)
+        layout.addLayout(port_controls)
 
         action_box = QFrame()
         action_box.setObjectName("subtleBox")
@@ -389,6 +409,10 @@ class DeskCompanionWindow(QMainWindow):
         self.send_button.clicked.connect(self._submit_text_message)
         self.message_input.submit_requested.connect(self._submit_text_message)
         self.reset_button.clicked.connect(self._reset_conversation)
+        self.petoi_refresh_button.clicked.connect(
+            lambda _checked=False: self.petoi_ports_refresh_requested.emit()
+        )
+        self.petoi_connect_button.clicked.connect(self._request_petoi_connection)
     
 
     def _show_notice(
@@ -933,4 +957,94 @@ class DeskCompanionWindow(QMainWindow):
         self._show_notice(
             f"Guard mode error: {message}"
         )
+
+    def _request_petoi_connection(self) -> None:
+        port = str(self.petoi_port_combo.currentData() or "").strip()
+        if port:
+            self.petoi_connect_requested.emit(port)
+
+    @pyqtSlot(list, str)
+    def set_petoi_ports(self, ports: list, preferred_port: str) -> None:
+        previous_port = str(self.petoi_port_combo.currentData() or "")
+        selected_port = preferred_port or previous_port
+        self.petoi_port_combo.blockSignals(True)
+        self.petoi_port_combo.clear()
+
+        for port in ports:
+            clean_port = str(port).strip()
+            if clean_port:
+                self.petoi_port_combo.addItem(clean_port, clean_port)
+
+        if self.petoi_port_combo.count() == 0:
+            self.petoi_port_combo.addItem("No COM ports found", "")
+        else:
+            selected_index = self.petoi_port_combo.findData(selected_port)
+            self.petoi_port_combo.setCurrentIndex(selected_index if selected_index >= 0 else 0)
+
+        self.petoi_port_combo.blockSignals(False)
+        has_port = bool(self.petoi_port_combo.currentData())
+        self.petoi_connect_button.setEnabled(has_port and not self.petoi_connecting)
+
+    @pyqtSlot(bool)
+    def set_petoi_connection_busy(self, busy: bool) -> None:
+        self.petoi_connecting = busy
+        self.petoi_port_combo.setEnabled(not busy)
+        self.petoi_refresh_button.setEnabled(not busy)
+        self.petoi_connect_button.setEnabled(not busy and bool(self.petoi_port_combo.currentData()))
+
+        if busy:
+            self.petoi_status_label.setText("CONNECTING")
+            self.petoi_status_label.setObjectName("chip")
+            self.petoi_connect_button.setText("Connecting…")
+        else:
+            self.petoi_status_label.setText("CONNECTED" if self.petoi_connected else "DISCONNECTED")
+            self.petoi_status_label.setObjectName("chipConnected" if self.petoi_connected else "chipDisconnected")
+            self.petoi_connect_button.setText("Reconnect" if self.petoi_connected else "Connect")
+
+        self.petoi_status_label.style().unpolish(self.petoi_status_label)
+        self.petoi_status_label.style().polish(self.petoi_status_label)
+
+    @pyqtSlot(bool, str)
+    def set_petoi_connection(self, connected: bool, port: str) -> None:
+        self.petoi_connected = connected
+        self.petoi_status_label.setText("CONNECTED" if connected else "DISCONNECTED")
+        self.petoi_status_label.setObjectName("chipConnected" if connected else "chipDisconnected")
+        self.petoi_status_label.setToolTip(
+            f"Petoi serial connection: {port}" if connected else "No Petoi serial connection"
+        )
+        self.petoi_connect_button.setText("Reconnect" if connected else "Connect")
+
+        if connected:
+            selected_index = self.petoi_port_combo.findData(port)
+            if selected_index >= 0:
+                self.petoi_port_combo.setCurrentIndex(selected_index)
+            self.action_label.setText(f"Ready on {port}")
+        else:
+            self.action_label.setText("Petoi is disconnected")
+
+        self.petoi_status_label.style().unpolish(self.petoi_status_label)
+        self.petoi_status_label.style().polish(self.petoi_status_label)
+
+    @pyqtSlot(str)
+    def show_petoi_status(self, message: str) -> None:
+        self.action_label.setText(message)
+
+    @pyqtSlot(dict)
+    def show_petoi_command(self, result: dict) -> None:
+        kind = str(result.get("kind", "command"))
+        command = str(result.get("command", ""))
+        action_key = str(result.get("action_key", ""))
+
+        if kind == "audio":
+            text = f"Playing latest speech • {command}"
+        elif kind == "action_stop":
+            text = f"{action_key} complete • {command}"
+        else:
+            text = f"{action_key} • {command}"
+
+        self.action_label.setText(text)
+
+    @pyqtSlot(str)
+    def show_petoi_error(self, message: str) -> None:
+        self.action_label.setText(message)
         
