@@ -306,7 +306,7 @@ def _contextual_example_library(action_catalog: dict[str, dict[str, Any]]) -> di
                 }
             },
         },
-        "Your design review starts in ten minutes in Room 301.",
+        "Your design review starts in ten minutes in Room 301. Should we start packing up or I can guard your stuff in the meantime",
         [calendar_action],
     )
 
@@ -321,7 +321,7 @@ def _contextual_example_library(action_catalog: dict[str, dict[str, Any]]) -> di
                 "current_input_idle_time": {"seconds": 360, "minutes": 6},
             },
         },
-        "If you're still working, picking one small next step might make it easier to restart.",
+        "Sometimes picking one small next step might make it easier to restart.",
         ["no_action"],
     )
 
@@ -354,7 +354,7 @@ def _contextual_example_library(action_catalog: dict[str, dict[str, Any]]) -> di
                 "recent_substantial_inactivity": False,
             },
         },
-        "You've built up a good stretch of active desk time; a brief reset would be useful now.",
+        "You've been working actively for a while; perhaps a breif break?.",
         [active_action],
     )
 
